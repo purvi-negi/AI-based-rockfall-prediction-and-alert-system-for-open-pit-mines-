@@ -2,8 +2,8 @@ import { useNavigate } from 'react-router-dom';
 import {
   User,
   Mail,
-  Calendar,
-  Building,
+  Shield,
+  Key,
   LogOut,
   ShieldCheck,
   CheckCircle2,
@@ -11,16 +11,12 @@ import {
 import { useAuth } from '../context/AuthContext';
 
 export default function UserProfile() {
-  const { user, logout, switchRole, isAdmin } = useAuth();
+  const { user, logout, isAdmin } = useAuth();
   const navigate = useNavigate();
 
   const handleLogout = () => {
     logout();
     navigate('/login');
-  };
-
-  const handleRoleToggle = (targetRole) => {
-    switchRole(targetRole);
   };
 
   return (
@@ -59,22 +55,22 @@ export default function UserProfile() {
         <div style={{ flex: 1, minWidth: '240px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
             <h2 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-primary)' }}>
-              {user?.name || 'Administrator'}
+              {user?.name || 'User'}
             </h2>
             <span
               className={`badge ${isAdmin ? 'badge-primary' : 'badge-neutral'}`}
               style={{ fontSize: '13px', padding: '4px 10px' }}
             >
-              {user?.role}
+              {user?.role || 'USER'}
             </span>
           </div>
 
           <div style={{ display: 'flex', gap: '16px', color: 'var(--text-secondary)', fontSize: '13px', flexWrap: 'wrap' }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-              <Mail size={14} /> {user?.email}
+              <Mail size={14} /> {user?.email || 'No email registered'}
             </span>
             <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-              <Building size={14} /> {user?.department || 'Geotechnical Safety'}
+              <Shield size={14} /> Role: {user?.role || 'USER'}
             </span>
           </div>
         </div>
@@ -101,26 +97,26 @@ export default function UserProfile() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13.5px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', paddingBottom: '10px' }}>
               <span style={{ color: 'var(--text-secondary)' }}>System User ID</span>
-              <span style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{user?.id || 'USR-ADM-01'}</span>
+              <span style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{user?.id || user?.userId || 'N/A'}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', paddingBottom: '10px' }}>
               <span style={{ color: 'var(--text-secondary)' }}>Full Legal Name</span>
-              <span style={{ fontWeight: 600 }}>{user?.name}</span>
+              <span style={{ fontWeight: 600 }}>{user?.name || 'N/A'}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', paddingBottom: '10px' }}>
               <span style={{ color: 'var(--text-secondary)' }}>Email Address</span>
-              <span style={{ fontWeight: 600 }}>{user?.email}</span>
+              <span style={{ fontWeight: 600 }}>{user?.email || 'N/A'}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', paddingBottom: '10px' }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Account Creation Date</span>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                <Calendar size={13} /> {user?.createdDate || '2025-08-14'}
+              <span style={{ color: 'var(--text-secondary)' }}>System Role</span>
+              <span style={{ fontWeight: 700, color: 'var(--primary)' }}>
+                {user?.role || 'USER'}
               </span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Assigned Mining Sectors</span>
-              <span style={{ fontWeight: 600, color: 'var(--primary)' }}>
-                {user?.assignedMines || 'All Sites (Master Access)'}
+              <span style={{ color: 'var(--text-secondary)' }}>Session Security</span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '5px', color: 'var(--success)', fontWeight: 600 }}>
+                <Key size={13} /> Active JWT Session
               </span>
             </div>
           </div>
@@ -136,25 +132,8 @@ export default function UserProfile() {
           </div>
 
           <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '14px' }}>
-            Current Role: <strong style={{ color: 'var(--text-primary)' }}>{user?.role}</strong>. For your college viva/project demonstration, you can switch roles on the fly:
+            Current System Role: <strong style={{ color: 'var(--text-primary)' }}>{user?.role || 'USER'}</strong>. Permissions are strictly enforced by the backend API Gateway:
           </p>
-
-          <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
-            <button
-              className={`btn ${isAdmin ? 'btn-primary' : 'btn-secondary'}`}
-              style={{ flex: 1 }}
-              onClick={() => handleRoleToggle('ADMIN')}
-            >
-              ADMINISTRATOR
-            </button>
-            <button
-              className={`btn ${!isAdmin ? 'btn-primary' : 'btn-secondary'}`}
-              style={{ flex: 1 }}
-              onClick={() => handleRoleToggle('USER')}
-            >
-              FIELD OPERATOR (USER)
-            </button>
-          </div>
 
           <div style={{ fontSize: '12.5px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

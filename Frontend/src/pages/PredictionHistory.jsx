@@ -4,6 +4,7 @@ import {
   Filter,
   Eye,
   X,
+  AlertTriangle,
 } from 'lucide-react';
 import DataTable from '../components/DataTable';
 import { apiService } from '../services/api';
@@ -15,6 +16,7 @@ export default function PredictionHistory() {
   const [searchQuery, setSearchQuery] = useState('');
   const [mineFilter, setMineFilter] = useState('ALL');
   const [riskFilter, setRiskFilter] = useState('ALL');
+  const [errorMsg, setErrorMsg] = useState(null);
 
   // Detail Modal
   const [selectedRecord, setSelectedRecord] = useState(null);
@@ -22,14 +24,26 @@ export default function PredictionHistory() {
   const fetchHistory = async () => {
     setLoading(true);
     try {
+      setErrorMsg(null);
       const [predsRes, minesRes] = await Promise.all([
         apiService.getPredictions(),
         apiService.getMines(),
       ]);
-      setPredictions(predsRes);
+      const mappedPreds = predsRes.map((p) => {
+        const m = minesRes.find((mine) => String(mine.id) === String(p.mineId));
+        return {
+          ...p,
+          mineName:
+            p.mineName && !p.mineName.startsWith('Mine #')
+              ? p.mineName
+              : m?.name || p.mineName || (p.mineId ? `Mine #${p.mineId}` : 'Unknown Mine'),
+        };
+      });
+      setPredictions(mappedPreds);
       setMines(minesRes);
     } catch (err) {
       console.error(err);
+      setErrorMsg(err?.response?.data?.message || err?.message || 'Failed to load prediction history.');
     } finally {
       setLoading(false);
     }
@@ -41,10 +55,10 @@ export default function PredictionHistory() {
 
   const filteredPredictions = predictions.filter((p) => {
     const matchesSearch =
-      p.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.mineName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.snapshotId.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesMine = mineFilter === 'ALL' || p.mineId === mineFilter;
+      String(p.id ?? '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      String(p.mineName ?? '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      String(p.snapshotId ?? '').toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesMine = mineFilter === 'ALL' || String(p.mineId) === String(mineFilter);
     const matchesRisk = riskFilter === 'ALL' || p.riskLevel === riskFilter;
     return matchesSearch && matchesMine && matchesRisk;
   });
@@ -71,14 +85,20 @@ export default function PredictionHistory() {
       render: (val) => <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12.5px' }}>{val}</span>,
     },
     {
-      header: 'Predicted Class',
-      accessor: 'predictedClass',
-      render: (val) => (
-        <span className={`badge ${val === 'HAZARD' ? 'badge-hazard' : 'badge-safe'}`}>
-          <span className="badge-dot" />
-          {val}
-        </span>
-      ),
+      header: 'Effective Class',
+      accessor: 'effectiveClass',
+      render: (val, row) => {
+        const cls = val || row.predictedClass;
+        let badgeClass = 'badge-safe';
+        if (cls === 'CRITICAL' || cls === 'WARNING' || cls === 'HAZARD') badgeClass = 'badge-hazard';
+        else if (cls === 'LOW') badgeClass = 'badge-warning';
+        return (
+          <span className={`badge ${badgeClass}`}>
+            <span className="badge-dot" />
+            {cls}
+          </span>
+        );
+      },
     },
     {
       header: 'Hazard Prob.',
@@ -106,12 +126,13 @@ export default function PredictionHistory() {
     {
       header: 'Risk Level',
       accessor: 'riskLevel',
-      render: (val) => {
+      render: (val, row) => {
+        const eff = row.effectiveClass || val;
         let badge = 'badge-neutral';
-        if (val === 'CRITICAL' || val === 'HIGH') badge = 'badge-hazard';
-        else if (val === 'MEDIUM') badge = 'badge-warning';
-        else if (val === 'LOW') badge = 'badge-safe';
-        return <span className={`badge ${badge}`}>{val}</span>;
+        if (eff === 'CRITICAL' || eff === 'WARNING' || eff === 'HIGH') badge = 'badge-hazard';
+        else if (eff === 'LOW' || eff === 'MEDIUM') badge = 'badge-warning';
+        else if (eff === 'SAFE') badge = 'badge-safe';
+        return <span className={`badge ${badge}`}>{eff}</span>;
       },
     },
     {
@@ -146,6 +167,13 @@ export default function PredictionHistory() {
 
   return (
     <div>
+      {errorMsg && (
+        <div className="alert-banner alert-banner-danger" style={{ marginBottom: '16px' }}>
+          <AlertTriangle size={18} />
+          <span>{errorMsg}</span>
+        </div>
+      )}
+
       {/* FILTER TOOLBAR */}
       <div className="toolbar-wrap">
         <div className="toolbar-actions">
@@ -219,27 +247,58 @@ export default function PredictionHistory() {
             </div>
 
             <div className="modal-body">
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '12px 16px',
-                  borderRadius: 'var(--radius-md)',
-                  backgroundColor: selectedRecord.predictedClass === 'HAZARD' ? '#FEECEB' : '#E7F6ED',
-                  marginBottom: '16px',
-                }}
-              >
-                <div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Model Evaluation</div>
-                  <div style={{ fontSize: '17px', fontWeight: 800, color: selectedRecord.predictedClass === 'HAZARD' ? 'var(--danger)' : 'var(--success)' }}>
-                    {selectedRecord.predictedClass} ({selectedRecord.hazardProbability}% Hazard)
+              {(() => {
+                const effClass = selectedRecord.effectiveClass || selectedRecord.predictedClass;
+                const isDanger = effClass === 'CRITICAL' || effClass === 'WARNING' || effClass === 'HAZARD';
+                const isLow = effClass === 'LOW';
+                const badgeClass = isDanger ? 'badge-hazard' : isLow ? 'badge-warning' : 'badge-safe';
+                return (
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '12px 16px',
+                      borderRadius: 'var(--radius-md)',
+                      backgroundColor: isDanger ? '#FEECEB' : isLow ? '#FFFBEB' : '#E7F6ED',
+                      marginBottom: '16px',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Model Evaluation</div>
+                      <div style={{ fontSize: '17px', fontWeight: 800, color: isDanger ? 'var(--danger)' : isLow ? '#D97706' : 'var(--success)' }}>
+                        {effClass} ({selectedRecord.hazardProbability}% Hazard)
+                      </div>
+                    </div>
+                    <span className={`badge ${badgeClass}`}>
+                      {selectedRecord.riskLevel || effClass} RISK
+                    </span>
+                  </div>
+                );
+              })()}
+
+              {selectedRecord.rawSvmClass !== undefined && selectedRecord.rawSvmClass !== null && (
+                <div
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: '6px',
+                    backgroundColor: 'var(--surface)',
+                    border: '1px solid var(--border)',
+                    fontSize: '12px',
+                    marginBottom: '14px',
+                  }}
+                >
+                  <div style={{ fontWeight: 700, marginBottom: '4px', color: 'var(--text-primary)' }}>
+                    ML Model Diagnostic Output
+                  </div>
+                  <div style={{ display: 'flex', gap: '16px', color: 'var(--text-secondary)' }}>
+                    <span>Raw SVM Decision: <strong style={{ color: 'var(--text-primary)' }}>Class {selectedRecord.rawSvmClass} ({selectedRecord.rawSvmClass === 1 ? 'HAZARD' : 'SAFE'})</strong></span>
+                    {selectedRecord.decisionFunction != null && (
+                      <span>Decision Score f(x): <strong style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>{Number(selectedRecord.decisionFunction).toFixed(4)}</strong></span>
+                    )}
                   </div>
                 </div>
-                <span className={`badge ${selectedRecord.predictedClass === 'HAZARD' ? 'badge-hazard' : 'badge-safe'}`}>
-                  {selectedRecord.riskLevel} RISK
-                </span>
-              </div>
+              )}
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', paddingBottom: '6px' }}>

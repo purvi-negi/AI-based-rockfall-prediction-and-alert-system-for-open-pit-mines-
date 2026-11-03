@@ -17,6 +17,8 @@ export default function RockfallPrediction() {
   const [loading, setLoading] = useState(true);
   const [predicting, setPredicting] = useState(false);
   const [predictionResult, setPredictionResult] = useState(null);
+  const [mlHealth, setMlHealth] = useState(null);
+  const [errorMsg, setErrorMsg] = useState(null);
 
   // Form Inputs
   const [inputs, setInputs] = useState({
@@ -32,20 +34,35 @@ export default function RockfallPrediction() {
   const [formErrors, setFormErrors] = useState({});
 
   useEffect(() => {
-    async function loadMines() {
+    async function init() {
       try {
-        const list = await apiService.getMines();
-        setMines(list);
-        if (list.length > 0) {
-          setSelectedMineId(list[0].id);
+        const [minesResult, healthResult] = await Promise.allSettled([
+          apiService.getMines(),
+          apiService.checkMlHealth(),
+        ]);
+
+        if (minesResult.status === 'fulfilled') {
+          setMines(minesResult.value);
+          if (minesResult.value.length > 0) {
+            setSelectedMineId(minesResult.value[0].id);
+          }
+        } else {
+          setErrorMsg('Failed to load mines list.');
+        }
+
+        if (healthResult.status === 'fulfilled') {
+          setMlHealth(healthResult.value);
+        } else {
+          setMlHealth({ status: 'offline', modelLoaded: false });
         }
       } catch (err) {
         console.error(err);
+        setErrorMsg('Failed to initialize ML prediction page.');
       } finally {
         setLoading(false);
       }
     }
-    loadMines();
+    init();
   }, []);
 
   // Pre-fill parameters when user chooses a mine preset
@@ -118,16 +135,22 @@ export default function RockfallPrediction() {
     if (!validate()) return;
 
     setPredicting(true);
+    setErrorMsg(null);
     try {
-      const selectedMine = mines.find((m) => m.id === selectedMineId);
+      const selectedMine = mines.find((m) => String(m.id) === String(selectedMineId));
       const res = await apiService.runRockfallPrediction({
-        mineId: selectedMineId,
+        mineId: selectedMineId ? Number(selectedMineId) : null,
         mineName: selectedMine ? selectedMine.name : 'Unknown Mine',
         ...inputs,
       });
       setPredictionResult(res);
     } catch (err) {
       console.error(err);
+      setErrorMsg(
+        err?.response?.data?.message ||
+        err?.message ||
+        'Prediction failed. Please verify that the Python ML service and prediction service are running.'
+      );
     } finally {
       setPredicting(false);
     }
@@ -136,6 +159,8 @@ export default function RockfallPrediction() {
   if (loading) {
     return <Loading fullPage message="Initializing Machine Learning Prediction Pipeline..." />;
   }
+
+  const isModelOnline = mlHealth?.status === 'ok' && mlHealth?.modelLoaded;
 
   return (
     <div>
@@ -149,7 +174,7 @@ export default function RockfallPrediction() {
           justifyContent: 'space-between',
           flexWrap: 'wrap',
           gap: '12px',
-          borderLeft: '4px solid var(--primary)',
+          borderLeft: `4px solid ${isModelOnline ? 'var(--primary)' : 'var(--danger)'}`,
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -158,8 +183,8 @@ export default function RockfallPrediction() {
               width: '42px',
               height: '42px',
               borderRadius: 'var(--radius-md)',
-              backgroundColor: 'var(--primary-light)',
-              color: 'var(--primary)',
+              backgroundColor: isModelOnline ? 'var(--primary-light)' : 'rgba(239, 68, 68, 0.15)',
+              color: isModelOnline ? 'var(--primary)' : 'var(--danger)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -178,12 +203,27 @@ export default function RockfallPrediction() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span className="pulse-dot online" />
-          <span style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--success)' }}>
-            Model Status: Operational / Online
+          <span className={`pulse-dot ${isModelOnline ? 'online' : 'danger'}`} />
+          <span
+            style={{
+              fontSize: '12.5px',
+              fontWeight: 600,
+              color: isModelOnline ? 'var(--success)' : 'var(--danger)',
+            }}
+          >
+            {isModelOnline
+              ? 'Model Status: Operational / Online'
+              : 'Model Status: Offline / Model Unavailable'}
           </span>
         </div>
       </div>
+
+      {errorMsg && (
+        <div className="alert-banner alert-banner-danger" style={{ marginBottom: '20px' }}>
+          <AlertTriangle size={18} />
+          <span>{errorMsg}</span>
+        </div>
+      )}
 
       <div className="dashboard-grid-2">
         {/* INPUT PARAMETERS FORM */}
@@ -372,7 +412,9 @@ export default function RockfallPrediction() {
           {predictionResult ? (
             <div
               className={`prediction-hero-card ${
-                predictionResult.predictedClass === 'HAZARD' ? 'hazard' : 'safe'
+                predictionResult.effectiveClass === 'CRITICAL' || predictionResult.effectiveClass === 'WARNING'
+                  ? 'hazard'
+                  : 'safe'
               }`}
             >
               <div className="prediction-hero-header">
@@ -398,15 +440,17 @@ export default function RockfallPrediction() {
 
                 <span
                   className={`prediction-badge-lg ${
-                    predictionResult.predictedClass === 'HAZARD' ? 'hazard' : 'safe'
+                    predictionResult.effectiveClass === 'CRITICAL' || predictionResult.effectiveClass === 'WARNING'
+                      ? 'hazard'
+                      : 'safe'
                   }`}
                 >
-                  {predictionResult.predictedClass === 'HAZARD' ? (
+                  {predictionResult.effectiveClass === 'CRITICAL' || predictionResult.effectiveClass === 'WARNING' ? (
                     <ShieldAlert size={22} />
                   ) : (
                     <ShieldCheck size={22} />
                   )}
-                  {predictionResult.predictedClass}
+                  {predictionResult.effectiveClass}
                 </span>
               </div>
 
@@ -454,15 +498,15 @@ export default function RockfallPrediction() {
                   </div>
                   <span
                     className={`badge ${
-                      predictionResult.riskLevel === 'CRITICAL' || predictionResult.riskLevel === 'HIGH'
+                      predictionResult.effectiveClass === 'CRITICAL' || predictionResult.effectiveClass === 'WARNING'
                         ? 'badge-hazard'
-                        : predictionResult.riskLevel === 'MEDIUM'
+                        : predictionResult.effectiveClass === 'LOW'
                         ? 'badge-warning'
                         : 'badge-safe'
                     }`}
                     style={{ fontSize: '14px', padding: '6px 14px' }}
                   >
-                    {predictionResult.riskLevel}
+                    {predictionResult.effectiveClass}
                   </span>
                 </div>
 
@@ -490,27 +534,59 @@ export default function RockfallPrediction() {
                 </div>
               </div>
 
-              {/* CONTRIBUTING FACTORS BREAKDOWN */}
+              {/* MONITORED GEOTECHNICAL PARAMETERS */}
               <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
                 <div style={{ fontSize: '13px', fontWeight: 700, marginBottom: '10px' }}>
-                  Contributing Geotechnical Weights:
+                  Monitored Geotechnical Parameters:
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12.5px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>Ground Tilt ({predictionResult.factors.groundTilt}°):</span>
-                    <span style={{ fontWeight: 600 }}>25% ML Feature Weight</span>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', fontSize: '12.5px' }}>
+                  <div style={{ padding: '8px 12px', backgroundColor: 'var(--surface)', borderRadius: '6px', display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>Ground Tilt:</span>
+                    <span style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{predictionResult.factors.groundTilt}°</span>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>Pore Pressure ({predictionResult.factors.poreWaterPressure} kPa):</span>
-                    <span style={{ fontWeight: 600 }}>20% ML Feature Weight</span>
+                  <div style={{ padding: '8px 12px', backgroundColor: 'var(--surface)', borderRadius: '6px', display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>Discontinuity Angle:</span>
+                    <span style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{predictionResult.factors.discontinuityAngle}°</span>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>Discontinuity Dip ({predictionResult.factors.discontinuityAngle}°):</span>
-                    <span style={{ fontWeight: 600 }}>20% ML Feature Weight</span>
+                  <div style={{ padding: '8px 12px', backgroundColor: 'var(--surface)', borderRadius: '6px', display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>Joint Spacing:</span>
+                    <span style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{predictionResult.factors.jointSpacing} m</span>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>Joint Spacing & Vibration:</span>
-                    <span style={{ fontWeight: 600 }}>25% ML Feature Weight</span>
+                  <div style={{ padding: '8px 12px', backgroundColor: 'var(--surface)', borderRadius: '6px', display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>Pore Water Pressure:</span>
+                    <span style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{predictionResult.factors.poreWaterPressure} kPa</span>
+                  </div>
+                  <div style={{ padding: '8px 12px', backgroundColor: 'var(--surface)', borderRadius: '6px', display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>Vibration PPV:</span>
+                    <span style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{predictionResult.factors.vibrationRMR} mm/s</span>
+                  </div>
+                  <div style={{ padding: '8px 12px', backgroundColor: 'var(--surface)', borderRadius: '6px', display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>Rainfall:</span>
+                    <span style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{predictionResult.factors.rainfall} mm/h</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* ML MODEL DIAGNOSTIC OUTPUT */}
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px', marginTop: '16px' }}>
+                <div style={{ fontSize: '13px', fontWeight: 700, marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Cpu size={15} style={{ color: 'var(--primary)' }} />
+                  <span>ML Model Diagnostic Output</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px', fontSize: '12px' }}>
+                  <div style={{ padding: '8px 12px', backgroundColor: 'var(--surface)', borderRadius: '6px', border: '1px solid var(--border)' }}>
+                    <span style={{ color: 'var(--text-secondary)', display: 'block', fontSize: '11px' }}>Raw SVM Decision:</span>
+                    <strong>Class {predictionResult.rawSvmClass} ({predictionResult.rawSvmClass === 1 ? 'Hyperplane Hazard boundary' : 'Hyperplane Safe boundary'})</strong>
+                  </div>
+                  {predictionResult.decisionFunction != null && (
+                    <div style={{ padding: '8px 12px', backgroundColor: 'var(--surface)', borderRadius: '6px', border: '1px solid var(--border)' }}>
+                      <span style={{ color: 'var(--text-secondary)', display: 'block', fontSize: '11px' }}>Decision Function Score f(x):</span>
+                      <strong style={{ fontFamily: 'var(--font-mono)' }}>{predictionResult.decisionFunction >= 0 ? `+${predictionResult.decisionFunction.toFixed(4)}` : predictionResult.decisionFunction.toFixed(4)}</strong>
+                    </div>
+                  )}
+                  <div style={{ padding: '8px 12px', backgroundColor: 'var(--surface)', borderRadius: '6px', border: '1px solid var(--border)' }}>
+                    <span style={{ color: 'var(--text-secondary)', display: 'block', fontSize: '11px' }}>Effective Classification:</span>
+                    <strong style={{ color: predictionResult.alertTriggered ? 'var(--danger)' : 'var(--success)' }}>{predictionResult.effectiveClass} ({predictionResult.hazardProbability}%)</strong>
                   </div>
                 </div>
               </div>

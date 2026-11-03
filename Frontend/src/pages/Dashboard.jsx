@@ -29,14 +29,17 @@ import { apiService } from '../services/api';
 export default function Dashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState(null);
 
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
+      setErrorMsg(null);
       const res = await apiService.getDashboardStats();
       setData(res);
     } catch (err) {
       console.error(err);
+      setErrorMsg(err?.response?.data?.message || err?.message || 'Failed to load live dashboard telemetry.');
     } finally {
       setLoading(false);
     }
@@ -70,14 +73,20 @@ export default function Dashboard() {
       ),
     },
     {
-      header: 'Predicted Class',
-      accessor: 'predictedClass',
-      render: (val) => (
-        <span className={`badge ${val === 'HAZARD' ? 'badge-hazard' : 'badge-safe'}`}>
-          <span className="badge-dot" />
-          {val}
-        </span>
-      ),
+      header: 'Effective Class',
+      accessor: 'effectiveClass',
+      render: (val, row) => {
+        const cls = val || row.predictedClass;
+        let badgeClass = 'badge-safe';
+        if (cls === 'CRITICAL' || cls === 'WARNING' || cls === 'HAZARD') badgeClass = 'badge-hazard';
+        else if (cls === 'LOW') badgeClass = 'badge-warning';
+        return (
+          <span className={`badge ${badgeClass}`}>
+            <span className="badge-dot" />
+            {cls}
+          </span>
+        );
+      },
     },
     {
       header: 'Hazard Prob.',
@@ -96,12 +105,13 @@ export default function Dashboard() {
     {
       header: 'Risk Level',
       accessor: 'riskLevel',
-      render: (val) => {
+      render: (val, row) => {
+        const eff = row.effectiveClass || val;
         let badgeClass = 'badge-neutral';
-        if (val === 'CRITICAL' || val === 'HIGH') badgeClass = 'badge-hazard';
-        else if (val === 'MEDIUM') badgeClass = 'badge-warning';
-        else if (val === 'LOW') badgeClass = 'badge-safe';
-        return <span className={`badge ${badgeClass}`}>{val}</span>;
+        if (eff === 'CRITICAL' || eff === 'WARNING' || eff === 'HIGH') badgeClass = 'badge-hazard';
+        else if (eff === 'LOW' || eff === 'MEDIUM') badgeClass = 'badge-warning';
+        else if (eff === 'SAFE') badgeClass = 'badge-safe';
+        return <span className={`badge ${badgeClass}`}>{eff}</span>;
       },
     },
     {
@@ -113,55 +123,62 @@ export default function Dashboard() {
 
   return (
     <div className="dashboard-page">
+      {errorMsg && (
+        <div className="alert-banner alert-banner-danger" style={{ marginBottom: '20px' }}>
+          <AlertTriangle size={18} />
+          <span>{errorMsg}</span>
+        </div>
+      )}
+
       {/* 8 STATISTICS CARDS */}
       <div className="stat-cards-grid">
         <StatCard
           title="Total Mines"
-          value={stats?.totalMines}
+          value={stats?.totalMines ?? 0}
           icon={Mountain}
           subtitle="Registered Open Cast & Underground"
         />
         <StatCard
           title="Active Mines"
-          value={stats?.activeMines}
+          value={stats?.activeMines ?? 0}
           icon={Activity}
           subtitle="Under continuous sensor watch"
         />
         <StatCard
           title="Total Sensors"
-          value={stats?.totalSensors}
+          value={stats?.totalSensors ?? 0}
           icon={Cpu}
           subtitle="Deployed IoT instruments"
         />
         <StatCard
           title="Active Sensors"
-          value={stats?.activeSensors}
+          value={stats?.activeSensors ?? 0}
           icon={CheckCircle}
           subtitle="Transmitting telemetry normal"
         />
         <StatCard
           title="Total Alerts"
-          value={stats?.totalAlerts}
+          value={stats?.totalAlerts ?? 0}
           icon={Bell}
           subtitle="All historical alert triggers"
         />
         <StatCard
           title="Pending Alerts"
-          value={stats?.pendingAlerts}
+          value={stats?.pendingAlerts ?? 0}
           icon={AlertTriangle}
           variant="pending"
           subtitle="Requires immediate response"
         />
         <StatCard
           title="Acknowledged"
-          value={stats?.acknowledgedAlerts}
+          value={stats?.acknowledgedAlerts ?? 0}
           icon={Clock}
           variant="acknowledged"
           subtitle="Assigned to field engineers"
         />
         <StatCard
           title="Resolved Alerts"
-          value={stats?.resolvedAlerts}
+          value={stats?.resolvedAlerts ?? 0}
           icon={CheckCircle}
           variant="resolved"
           subtitle="Mitigated and verified safe"
@@ -171,64 +188,58 @@ export default function Dashboard() {
       {/* LATEST PREDICTION HERO SECTION & LATEST MONITORING SNAPSHOT */}
       <div className="dashboard-grid-2">
         {/* Latest Prediction Card */}
-        <div
-          className={`prediction-hero-card ${
-            latestPrediction?.predictedClass === 'HAZARD' ? 'hazard' : 'safe'
-          }`}
-        >
-          <div className="prediction-hero-header">
-            <div>
-              <div
-                style={{
-                  fontSize: '12px',
-                  fontWeight: 700,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.8px',
-                  color: 'var(--primary)',
-                  marginBottom: '4px',
-                }}
-              >
-                Latest ML Rockfall Evaluation
-              </div>
-              <h2 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)' }}>
-                {latestPrediction?.mineName}
-              </h2>
-              <div style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>
-                Snapshot: {latestPrediction?.snapshotId} • Evaluated: {latestPrediction?.timestamp}
-              </div>
-            </div>
+        {(() => {
+          const effClass = latestPrediction?.effectiveClass || latestPrediction?.predictedClass;
+          const isDanger = effClass === 'CRITICAL' || effClass === 'WARNING' || effClass === 'HAZARD';
+          return (
+            <div className={`prediction-hero-card ${isDanger ? 'hazard' : 'safe'}`}>
+              <div className="prediction-hero-header">
+                <div>
+                  <div
+                    style={{
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.8px',
+                      color: 'var(--primary)',
+                      marginBottom: '4px',
+                    }}
+                  >
+                    Latest ML Rockfall Evaluation
+                  </div>
+                  <h2 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)' }}>
+                    {latestPrediction ? latestPrediction.mineName : 'No Predictions Recorded'}
+                  </h2>
+                  <div style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>
+                    {latestPrediction
+                      ? `Snapshot: ${latestPrediction.snapshotId} • Evaluated: ${latestPrediction.timestamp}`
+                      : 'Run an evaluation in the Rockfall Prediction module to populate latest telemetry metrics.'}
+                  </div>
+                </div>
 
-            <span
-              className={`prediction-badge-lg ${
-                latestPrediction?.predictedClass === 'HAZARD' ? 'hazard' : 'safe'
-              }`}
-            >
-              {latestPrediction?.predictedClass === 'HAZARD' ? (
-                <ShieldAlert size={20} />
-              ) : (
-                <ShieldCheck size={20} />
-              )}
-              {latestPrediction?.predictedClass}
-            </span>
-          </div>
+                <span className={`prediction-badge-lg ${isDanger ? 'hazard' : 'safe'}`}>
+                  {isDanger ? <ShieldAlert size={20} /> : <ShieldCheck size={20} />}
+                  {effClass || 'NO DATA'}
+                </span>
+              </div>
 
           <div className="probability-bar-container">
             <div className="probability-bar-labels">
               <span style={{ color: 'var(--danger)' }}>
-                Hazard Probability: {latestPrediction?.hazardProbability}%
+                Hazard Probability: {latestPrediction?.hazardProbability ?? 0}%
               </span>
               <span style={{ color: 'var(--success)' }}>
-                Safe Probability: {latestPrediction?.safeProbability}%
+                Safe Probability: {latestPrediction?.safeProbability ?? 0}%
               </span>
             </div>
             <div className="probability-bar-track">
               <div
                 className="probability-bar-fill-hazard"
-                style={{ width: `${latestPrediction?.hazardProbability}%` }}
+                style={{ width: `${latestPrediction?.hazardProbability ?? 0}%` }}
               />
               <div
                 className="probability-bar-fill-safe"
-                style={{ width: `${latestPrediction?.safeProbability}%` }}
+                style={{ width: `${latestPrediction?.safeProbability ?? 0}%` }}
               />
             </div>
           </div>
@@ -245,25 +256,25 @@ export default function Dashboard() {
             <div className="sensor-metric-card" style={{ padding: '10px' }}>
               <div className="sensor-metric-title">Ground Tilt</div>
               <div style={{ fontSize: '16px', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
-                {latestPrediction?.factors?.groundTilt}°
+                {latestPrediction?.factors?.groundTilt != null ? `${latestPrediction.factors.groundTilt}°` : '—'}
               </div>
             </div>
             <div className="sensor-metric-card" style={{ padding: '10px' }}>
               <div className="sensor-metric-title">Discontinuity</div>
               <div style={{ fontSize: '16px', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
-                {latestPrediction?.factors?.discontinuityAngle}°
+                {latestPrediction?.factors?.discontinuityAngle != null ? `${latestPrediction.factors.discontinuityAngle}°` : '—'}
               </div>
             </div>
             <div className="sensor-metric-card" style={{ padding: '10px' }}>
               <div className="sensor-metric-title">Pore Pressure</div>
               <div style={{ fontSize: '16px', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
-                {latestPrediction?.factors?.poreWaterPressure} kPa
+                {latestPrediction?.factors?.poreWaterPressure != null ? `${latestPrediction.factors.poreWaterPressure} kPa` : '—'}
               </div>
             </div>
             <div className="sensor-metric-card" style={{ padding: '10px' }}>
               <div className="sensor-metric-title">Rainfall</div>
               <div style={{ fontSize: '16px', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
-                {latestPrediction?.factors?.rainfall} mm/h
+                {latestPrediction?.factors?.rainfall != null ? `${latestPrediction.factors.rainfall} mm/h` : '—'}
               </div>
             </div>
           </div>
@@ -275,6 +286,8 @@ export default function Dashboard() {
             </Link>
           </div>
         </div>
+          );
+        })()}
 
         {/* Risk Distribution Chart */}
         <div className="card-white">
@@ -371,48 +384,54 @@ export default function Dashboard() {
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {mines?.map((mine) => (
-              <div
-                key={mine.id}
-                style={{
-                  padding: '12px 14px',
-                  borderRadius: 'var(--radius-md)',
-                  backgroundColor: 'var(--surface)',
-                  border: '1px solid var(--border)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                }}
-              >
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: '13.5px', color: 'var(--text-primary)' }}>
-                    {mine.name}
+            {mines && mines.length > 0 ? (
+              mines.map((mine) => (
+                <div
+                  key={mine.id}
+                  style={{
+                    padding: '12px 14px',
+                    borderRadius: 'var(--radius-md)',
+                    backgroundColor: 'var(--surface)',
+                    border: '1px solid var(--border)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: '13.5px', color: 'var(--text-primary)' }}>
+                      {mine.name}
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                      Slope: {mine.slopeAngle != null ? `${mine.slopeAngle}°` : '—'} • {mine.totalSensors ?? 0} Sensors
+                    </div>
                   </div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                    Slope: {mine.slopeAngle}° • {mine.totalSensors} Sensors
-                  </div>
-                </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span
-                    className={`badge ${
-                      mine.riskRating === 'Critical'
-                        ? 'badge-hazard'
-                        : mine.riskRating === 'High'
-                        ? 'badge-warning'
-                        : 'badge-safe'
-                    }`}
-                  >
-                    {mine.riskRating}
-                  </span>
-                  <span
-                    className={`badge ${mine.status === 'Active' ? 'badge-safe' : 'badge-neutral'}`}
-                  >
-                    {mine.status}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span
+                      className={`badge ${
+                        mine.riskRating === 'Critical'
+                          ? 'badge-hazard'
+                          : mine.riskRating === 'High'
+                          ? 'badge-warning'
+                          : 'badge-safe'
+                      }`}
+                    >
+                      {mine.riskRating}
+                    </span>
+                    <span
+                      className={`badge ${mine.status === 'Active' ? 'badge-safe' : 'badge-neutral'}`}
+                    >
+                      {mine.status}
+                    </span>
+                  </div>
                 </div>
+              ))
+            ) : (
+              <div style={{ color: 'var(--text-secondary)', fontSize: '13px', padding: '16px 0', textAlign: 'center' }}>
+                No registered mine sites found.
               </div>
-            ))}
+            )}
           </div>
         </div>
       </div>

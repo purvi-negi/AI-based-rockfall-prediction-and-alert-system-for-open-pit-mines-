@@ -61,6 +61,11 @@ public class PredictionService {
         // 2. Invoke Python FastAPI ML endpoint
         MlPredictionResponseDTO mlResult = mlServiceClient.predict(request);
 
+        Integer rawSvm = mlResult.getRawSvmClass() != null ? mlResult.getRawSvmClass() : mlResult.getPredictedClass();
+        String effClass = mlResult.getEffectiveClass() != null && !mlResult.getEffectiveClass().isBlank()
+                ? mlResult.getEffectiveClass()
+                : (mlResult.getRiskLevel() != null ? mlResult.getRiskLevel() : "SAFE");
+
         // 3. Map inputs + ML outputs to JPA entity
         PredictionHistory entity = PredictionHistory.builder()
                 .snapshotId(request.getSnapshotId())
@@ -72,6 +77,9 @@ public class PredictionService {
                 .vibrationRmr(request.getVibrationRmr())
                 .rainfallMm(request.getRainfallMm())
                 .predictedClass(mlResult.getPredictedClass())
+                .rawSvmClass(rawSvm)
+                .effectiveClass(effClass)
+                .decisionFunction(mlResult.getDecisionFunction())
                 .hazardProbability(mlResult.getHazardProbability())
                 .safeProbability(mlResult.getSafeProbability())
                 .riskLevel(mlResult.getRiskLevel())
@@ -139,6 +147,11 @@ public class PredictionService {
     }
 
     private PredictionResponseDTO mapToDTO(PredictionHistory entity) {
+        Integer rawSvm = entity.getRawSvmClass() != null ? entity.getRawSvmClass() : entity.getPredictedClass();
+        String effClass = entity.getEffectiveClass() != null && !entity.getEffectiveClass().isBlank()
+                ? entity.getEffectiveClass()
+                : (entity.getRiskLevel() != null ? entity.getRiskLevel() : (entity.getHazardProbability() != null && entity.getHazardProbability() >= 0.5 ? "WARNING" : "SAFE"));
+
         return PredictionResponseDTO.builder()
                 .id(entity.getId())
                 .snapshotId(entity.getSnapshotId())
@@ -150,6 +163,9 @@ public class PredictionService {
                 .vibrationRmr(entity.getVibrationRmr())
                 .rainfallMm(entity.getRainfallMm())
                 .predictedClass(entity.getPredictedClass())
+                .rawSvmClass(rawSvm)
+                .effectiveClass(effClass)
+                .decisionFunction(entity.getDecisionFunction())
                 .hazardProbability(entity.getHazardProbability())
                 .safeProbability(entity.getSafeProbability())
                 .riskLevel(entity.getRiskLevel())

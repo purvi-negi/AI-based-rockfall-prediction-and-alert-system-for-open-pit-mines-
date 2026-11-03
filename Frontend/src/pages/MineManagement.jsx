@@ -37,14 +37,22 @@ export default function MineManagement() {
   const [formErrors, setFormErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState(null);
+  const [errorMsg, setErrorMsg] = useState(null);
 
   const fetchMines = async () => {
     setLoading(true);
+    setErrorMsg(null);
     try {
       const res = await apiService.getMines();
-      setMines(res);
+      setMines(Array.isArray(res) ? res : []);
     } catch (err) {
-      console.error(err);
+      console.error('Failed to load mines:', err);
+      const apiErr =
+        err.response?.data?.message ||
+        err.response?.data?.error ||
+        err.message ||
+        'Failed to load mine sites.';
+      setErrorMsg(apiErr);
     } finally {
       setLoading(false);
     }
@@ -71,12 +79,12 @@ export default function MineManagement() {
   const handleOpenEdit = (mine) => {
     setSelectedMine(mine);
     setFormData({
-      name: mine.name,
-      location: mine.location,
-      slopeAngle: mine.slopeAngle,
+      name: mine.name || mine.mineName || '',
+      location: mine.location || '',
+      slopeAngle: mine.slopeAngle != null ? String(mine.slopeAngle) : '',
       benchHeight: mine.benchHeight || '15m',
       operator: mine.operator || 'National Mining Syndicate',
-      status: mine.status,
+      status: mine.status || 'Active',
       riskRating: mine.riskRating || 'Moderate',
     });
     setFormErrors({});
@@ -90,21 +98,24 @@ export default function MineManagement() {
 
   const handleOpenDelete = (mine) => {
     setSelectedMine(mine);
+    setFormErrors({});
     setModalMode('delete');
   };
 
   const closeModal = () => {
     setModalMode(null);
     setSelectedMine(null);
+    setFormErrors({});
   };
 
   const validateForm = () => {
     const errs = {};
     if (!formData.name.trim()) errs.name = 'Mine name is required.';
     if (!formData.location.trim()) errs.location = 'Location details are required.';
-    if (!formData.slopeAngle || isNaN(formData.slopeAngle)) {
+    const parsedSlope = parseFloat(formData.slopeAngle);
+    if (formData.slopeAngle === '' || isNaN(parsedSlope)) {
       errs.slopeAngle = 'Valid slope angle in degrees is required.';
-    } else if (formData.slopeAngle < 0 || formData.slopeAngle > 90) {
+    } else if (parsedSlope < 0 || parsedSlope > 90) {
       errs.slopeAngle = 'Slope angle must be between 0° and 90°.';
     }
     setFormErrors(errs);
@@ -115,24 +126,32 @@ export default function MineManagement() {
     e.preventDefault();
     if (!validateForm()) return;
     setSubmitting(true);
+    setFormErrors({});
     try {
+      const payload = {
+        ...formData,
+        name: formData.name.trim(),
+        mineName: formData.name.trim(),
+        location: formData.location.trim(),
+        slopeAngle: parseFloat(formData.slopeAngle),
+      };
       if (modalMode === 'add') {
-        await apiService.createMine({
-          ...formData,
-          slopeAngle: parseFloat(formData.slopeAngle),
-        });
+        await apiService.createMine(payload);
         showNotification('New mine location successfully registered.');
       } else if (modalMode === 'edit') {
-        await apiService.updateMine(selectedMine.id, {
-          ...formData,
-          slopeAngle: parseFloat(formData.slopeAngle),
-        });
+        await apiService.updateMine(selectedMine.id, payload);
         showNotification('Mine configuration updated.');
       }
       closeModal();
-      fetchMines();
+      await fetchMines();
     } catch (err) {
-      console.error(err);
+      console.error('Failed to save mine:', err);
+      const apiErr =
+        err.response?.data?.message ||
+        err.response?.data?.error ||
+        err.message ||
+        'Failed to save mine configuration. Please verify input and try again.';
+      setFormErrors((prev) => ({ ...prev, submit: apiErr }));
     } finally {
       setSubmitting(false);
     }
@@ -141,13 +160,20 @@ export default function MineManagement() {
   const handleConfirmDelete = async () => {
     if (!selectedMine) return;
     setSubmitting(true);
+    setFormErrors({});
     try {
       await apiService.deleteMine(selectedMine.id);
-      showNotification(`Mine ${selectedMine.id} deleted successfully.`);
+      showNotification(`Mine ${selectedMine.name || selectedMine.mineName || selectedMine.id} deleted successfully.`);
       closeModal();
-      fetchMines();
+      await fetchMines();
     } catch (err) {
-      console.error(err);
+      console.error('Failed to delete mine:', err);
+      const apiErr =
+        err.response?.data?.message ||
+        err.response?.data?.error ||
+        err.message ||
+        'Failed to delete mine. Ensure no active sensors or dependencies exist.';
+      setFormErrors((prev) => ({ ...prev, submit: apiErr }));
     } finally {
       setSubmitting(false);
     }
@@ -160,10 +186,11 @@ export default function MineManagement() {
 
   // Filtered mines
   const filteredMines = mines.filter((mine) => {
-    const matchesSearch =
-      mine.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      mine.location.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      mine.id.toLowerCase().includes(searchQuery.toLowerCase());
+    const q = searchQuery.toLowerCase();
+    const nameMatch = (mine.name || mine.mineName || '').toLowerCase().includes(q);
+    const locMatch = (mine.location || '').toLowerCase().includes(q);
+    const idMatch = String(mine.id ?? '').toLowerCase().includes(q);
+    const matchesSearch = nameMatch || locMatch || idMatch;
     const matchesStatus = statusFilter === 'ALL' || mine.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
@@ -172,7 +199,7 @@ export default function MineManagement() {
     {
       header: 'Mine ID',
       accessor: 'id',
-      render: (val) => <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{val}</span>,
+      render: (val) => <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>#{val}</span>,
     },
     {
       header: 'Mine Name',
@@ -270,6 +297,13 @@ export default function MineManagement() {
         </div>
       )}
 
+      {errorMsg && (
+        <div className="alert-banner alert-banner-danger" style={{ marginBottom: '16px' }}>
+          <AlertTriangle size={18} />
+          <span>{errorMsg}</span>
+        </div>
+      )}
+
       {/* TOOLBAR */}
       <div className="toolbar-wrap">
         <div className="toolbar-actions">
@@ -328,7 +362,7 @@ export default function MineManagement() {
         <div className="modal-overlay" onClick={closeModal}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>{modalMode === 'add' ? 'Register New Mine Site' : `Edit Mine: ${selectedMine?.name}`}</h3>
+              <h3>{modalMode === 'add' ? 'Register New Mine Site' : `Edit Mine: ${selectedMine?.name || selectedMine?.mineName || selectedMine?.id}`}</h3>
               <button className="btn-icon" onClick={closeModal}>
                 <X size={18} />
               </button>
@@ -336,6 +370,12 @@ export default function MineManagement() {
 
             <form onSubmit={handleSubmit}>
               <div className="modal-body">
+                {formErrors.submit && (
+                  <div className="alert-banner alert-banner-danger" style={{ marginBottom: '14px' }}>
+                    <AlertTriangle size={16} />
+                    <span>{formErrors.submit}</span>
+                  </div>
+                )}
                 <div className="form-group">
                   <label className="form-label">Mine Name</label>
                   <input
@@ -432,7 +472,7 @@ export default function MineManagement() {
         <div className="modal-overlay" onClick={closeModal}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>Mine Details: {selectedMine.name}</h3>
+              <h3>Mine Details: {selectedMine.name || selectedMine.mineName}</h3>
               <button className="btn-icon" onClick={closeModal}>
                 <X size={18} />
               </button>
@@ -442,7 +482,11 @@ export default function MineManagement() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>
                   <span style={{ color: 'var(--text-secondary)' }}>Mine ID</span>
-                  <span style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{selectedMine.id}</span>
+                  <span style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }}>#{selectedMine.id}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>Mine Name</span>
+                  <span style={{ fontWeight: 600 }}>{selectedMine.name || selectedMine.mineName}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>
                   <span style={{ color: 'var(--text-secondary)' }}>Location</span>
@@ -450,11 +494,11 @@ export default function MineManagement() {
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>
                   <span style={{ color: 'var(--text-secondary)' }}>Operating Entity</span>
-                  <span style={{ fontWeight: 600 }}>{selectedMine.operator || 'National Mining Corp'}</span>
+                  <span style={{ fontWeight: 600 }}>{selectedMine.operator || 'National Mining Syndicate'}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>
                   <span style={{ color: 'var(--text-secondary)' }}>Slope Angle</span>
-                  <span style={{ fontWeight: 700, color: 'var(--primary)' }}>{selectedMine.slopeAngle}°</span>
+                  <span style={{ fontWeight: 700, color: 'var(--primary)' }}>{selectedMine.slopeAngle != null ? `${selectedMine.slopeAngle}°` : 'N/A'}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>
                   <span style={{ color: 'var(--text-secondary)' }}>Bench Height</span>
@@ -466,7 +510,7 @@ export default function MineManagement() {
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ color: 'var(--text-secondary)' }}>Operational Status</span>
-                  <span className="badge badge-safe">{selectedMine.status}</span>
+                  <span className="badge badge-safe">{selectedMine.status || 'Active'}</span>
                 </div>
               </div>
             </div>
@@ -492,6 +536,12 @@ export default function MineManagement() {
             </div>
 
             <div className="modal-body">
+              {formErrors.submit && (
+                <div className="alert-banner alert-banner-danger" style={{ marginBottom: '14px' }}>
+                  <AlertTriangle size={16} />
+                  <span>{formErrors.submit}</span>
+                </div>
+              )}
               <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-start' }}>
                 <div
                   style={{
@@ -510,10 +560,10 @@ export default function MineManagement() {
                 </div>
                 <div>
                   <p style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '6px' }}>
-                    Are you sure you want to delete {selectedMine.name}?
+                    Are you sure you want to delete {selectedMine.name || selectedMine.mineName} (ID: #{selectedMine.id})?
                   </p>
                   <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                    This action will permanently remove mine configuration and all linked telemetry sensors.
+                    This action will permanently remove mine configuration and all linked telemetry records.
                   </p>
                 </div>
               </div>

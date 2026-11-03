@@ -33,18 +33,31 @@ export default function AlertManagement() {
   const [resolutionNotes, setResolutionNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState(null);
+  const [errorMsg, setErrorMsg] = useState(null);
 
   const fetchAlertsData = async () => {
     setLoading(true);
     try {
+      setErrorMsg(null);
       const [alertsRes, minesRes] = await Promise.all([
         apiService.getAlerts(),
         apiService.getMines(),
       ]);
-      setAlerts(alertsRes);
+      const mappedAlerts = alertsRes.map((a) => {
+        const m = minesRes.find((mine) => String(mine.id) === String(a.mineId));
+        return {
+          ...a,
+          mineName:
+            a.mineName && !a.mineName.startsWith('Mine #')
+              ? a.mineName
+              : m?.name || a.mineName || (a.mineId ? `Mine #${a.mineId}` : 'Unknown Mine'),
+        };
+      });
+      setAlerts(mappedAlerts);
       setMines(minesRes);
     } catch (err) {
       console.error(err);
+      setErrorMsg(err?.response?.data?.message || err?.message || 'Failed to load safety alerts.');
     } finally {
       setLoading(false);
     }
@@ -57,11 +70,13 @@ export default function AlertManagement() {
   const handleAcknowledge = async (alertId) => {
     setSubmitting(true);
     try {
+      setErrorMsg(null);
       await apiService.acknowledgeAlert(alertId);
       showFeedback(`Alert ${alertId} marked as Acknowledged.`);
       fetchAlertsData();
     } catch (err) {
       console.error(err);
+      setErrorMsg(err?.response?.data?.message || err?.message || 'Failed to acknowledge alert.');
     } finally {
       setSubmitting(false);
     }
@@ -77,12 +92,18 @@ export default function AlertManagement() {
     if (!selectedAlert) return;
     setSubmitting(true);
     try {
+      setErrorMsg(null);
+      // Backend Alert state machine requires alert to be ACKNOWLEDGED before RESOLVED
+      if (selectedAlert.status === 'Pending') {
+        await apiService.acknowledgeAlert(selectedAlert.id);
+      }
       await apiService.resolveAlert(selectedAlert.id, resolutionNotes);
       showFeedback(`Alert ${selectedAlert.id} resolved and marked safe.`);
       setResolveModalOpen(false);
       fetchAlertsData();
     } catch (err) {
       console.error(err);
+      setErrorMsg(err?.response?.data?.message || err?.message || 'Failed to resolve alert.');
     } finally {
       setSubmitting(false);
     }
@@ -107,11 +128,11 @@ export default function AlertManagement() {
   // Filtered
   const filteredAlerts = alerts.filter((a) => {
     const matchesStatus = statusFilter === 'ALL' || a.status === statusFilter;
-    const matchesMine = mineFilter === 'ALL' || a.mineId === mineFilter;
+    const matchesMine = mineFilter === 'ALL' || String(a.mineId) === String(mineFilter);
     const matchesSearch =
-      a.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      a.mineName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (a.notes && a.notes.toLowerCase().includes(searchQuery.toLowerCase()));
+      String(a.id ?? '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      String(a.mineName ?? '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (a.notes && String(a.notes).toLowerCase().includes(searchQuery.toLowerCase()));
     return matchesStatus && matchesMine && matchesSearch;
   });
 
@@ -224,6 +245,13 @@ export default function AlertManagement() {
         <div className="alert-banner alert-banner-success">
           <CheckCircle2 size={18} />
           <span>{feedbackMsg}</span>
+        </div>
+      )}
+
+      {errorMsg && (
+        <div className="alert-banner alert-banner-danger" style={{ marginBottom: '16px' }}>
+          <AlertTriangle size={18} />
+          <span>{errorMsg}</span>
         </div>
       )}
 

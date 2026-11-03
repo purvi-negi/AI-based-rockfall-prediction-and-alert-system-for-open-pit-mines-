@@ -1,8 +1,8 @@
 import apiClient from './api';
 
-const USE_MOCK = import.meta.env.VITE_ENABLE_MOCK !== 'false';
+const USE_MOCK = import.meta.env.VITE_ENABLE_MOCK === 'true';
 
-// Default mock accounts for demonstration
+// Default mock accounts for offline demonstration only
 export const DEMO_ACCOUNTS = {
   admin: {
     id: 'USR-ADM-01',
@@ -24,11 +24,50 @@ export const DEMO_ACCOUNTS = {
   },
 };
 
+/**
+ * Normalizes backend flat AuthResponse into frontend { token, user } contract.
+ * Backend returns: { access_token, token_type, user_id, name, email, role, expires_in }
+ */
+export function normalizeAuthResponse(data) {
+  if (!data) return null;
+
+  const token = data.access_token || data.token;
+  if (!token) return null;
+
+  const role = data.role ? String(data.role).toUpperCase() : 'USER';
+  const user = data.user || {
+    id: data.user_id != null ? String(data.user_id) : (data.id != null ? String(data.id) : ''),
+    userId: data.user_id ?? data.id,
+    name: data.name || '',
+    email: data.email || '',
+    role,
+    tokenType: data.token_type || 'Bearer',
+  };
+
+  return { token, user };
+}
+
+/**
+ * Persists token and user based on rememberMe flag.
+ */
+function saveAuthSession(token, user, rememberMe) {
+  if (rememberMe) {
+    localStorage.setItem('rockfall_token', token);
+    localStorage.setItem('rockfall_user', JSON.stringify(user));
+    sessionStorage.removeItem('rockfall_token');
+    sessionStorage.removeItem('rockfall_user');
+  } else {
+    sessionStorage.setItem('rockfall_token', token);
+    sessionStorage.setItem('rockfall_user', JSON.stringify(user));
+    localStorage.removeItem('rockfall_token');
+    localStorage.removeItem('rockfall_user');
+  }
+}
+
 export const authService = {
   async login(email, password, rememberMe = true) {
     if (USE_MOCK) {
       await new Promise((r) => setTimeout(r, 300));
-      // Basic mock check
       const isAdmin = email.toLowerCase().includes('admin');
       const mockUser = isAdmin ? DEMO_ACCOUNTS.admin : {
         ...DEMO_ACCOUNTS.user,
@@ -37,56 +76,58 @@ export const authService = {
       };
 
       const token = `mock_jwt_token_${Date.now()}`;
-      if (rememberMe) {
-        localStorage.setItem('rockfall_token', token);
-        localStorage.setItem('rockfall_user', JSON.stringify(mockUser));
-      } else {
-        sessionStorage.setItem('rockfall_token', token);
-        sessionStorage.setItem('rockfall_user', JSON.stringify(mockUser));
-      }
-
+      saveAuthSession(token, mockUser, rememberMe);
       return { user: mockUser, token };
     }
 
     const res = await apiClient.post('/auth/login', { email, password });
-    const { token, user } = res.data;
-    if (token) {
-      localStorage.setItem('rockfall_token', token);
-      localStorage.setItem('rockfall_user', JSON.stringify(user));
+    const normalized = normalizeAuthResponse(res.data);
+    if (!normalized || !normalized.token) {
+      throw new Error('Authentication response did not contain a valid access token.');
     }
-    return res.data;
+
+    saveAuthSession(normalized.token, normalized.user, rememberMe);
+    return normalized;
   },
 
-  async register(data) {
+  async register(data, rememberMe = true) {
     if (USE_MOCK) {
       await new Promise((r) => setTimeout(r, 350));
       const newUser = {
         id: `USR-REG-${Math.floor(Math.random() * 900 + 100)}`,
         name: data.name,
         email: data.email,
-        role: data.role || 'USER',
+        role: 'USER', // Public registration is always standard USER
         department: data.department || 'Mine Safety Operations',
         createdDate: new Date().toISOString().slice(0, 10),
         assignedMines: 'General Mining Fleet',
       };
       const token = `mock_jwt_token_${Date.now()}`;
-      localStorage.setItem('rockfall_token', token);
-      localStorage.setItem('rockfall_user', JSON.stringify(newUser));
+      saveAuthSession(token, newUser, rememberMe);
       return { user: newUser, token };
     }
 
-    const res = await apiClient.post('/auth/register', data);
-    return res.data;
+    // Backend RegisterRequest expects: { name, email, password }
+    const payload = {
+      name: data.name,
+      email: data.email,
+      password: data.password,
+    };
+
+    const res = await apiClient.post('/auth/register', payload);
+    const normalized = normalizeAuthResponse(res.data);
+    if (!normalized || !normalized.token) {
+      throw new Error('Registration response did not contain a valid access token.');
+    }
+
+    saveAuthSession(normalized.token, normalized.user, rememberMe);
+    return normalized;
   },
 
   getCurrentUser() {
     const userJson = localStorage.getItem('rockfall_user') || sessionStorage.getItem('rockfall_user');
     if (!userJson) {
-      // Default to admin for seamless initial load if user visits directly
-      const defaultUser = DEMO_ACCOUNTS.admin;
-      localStorage.setItem('rockfall_user', JSON.stringify(defaultUser));
-      localStorage.setItem('rockfall_token', 'demo_active_token');
-      return defaultUser;
+      return null;
     }
     try {
       return JSON.parse(userJson);
@@ -101,18 +142,6 @@ export const authService = {
     sessionStorage.removeItem('rockfall_token');
     sessionStorage.removeItem('rockfall_user');
   },
-
-  switchUserRole(targetRole) {
-    const current = this.getCurrentUser();
-    const updated = {
-      ...current,
-      role: targetRole,
-      ...(targetRole === 'ADMIN' ? DEMO_ACCOUNTS.admin : DEMO_ACCOUNTS.user),
-    };
-    localStorage.setItem('rockfall_user', JSON.stringify(updated));
-    return updated;
-  },
 };
 
 export default authService;
-

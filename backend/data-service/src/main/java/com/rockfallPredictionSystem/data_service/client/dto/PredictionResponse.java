@@ -43,6 +43,15 @@ public class PredictionResponse {
     @JsonProperty("predicted_class")
     private Integer predictedClass;
 
+    @JsonProperty("raw_svm_class")
+    private Integer rawSvmClass;
+
+    @JsonProperty("effective_class")
+    private String effectiveClass;
+
+    @JsonProperty("decision_function")
+    private Double decisionFunction;
+
     @JsonProperty("hazard_probability")
     private Double hazardProbability;
 

@@ -1,8 +1,8 @@
 import axios from 'axios';
 
 // Centralized Axios instance
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
-const USE_MOCK = import.meta.env.VITE_ENABLE_MOCK !== 'false';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api';
+const USE_MOCK = import.meta.env.VITE_ENABLE_MOCK === 'true';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -15,7 +15,7 @@ const apiClient = axios.create({
 // Request Interceptor: Attach Auth Token
 apiClient.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('rockfall_token');
+    const token = localStorage.getItem('rockfall_token') || sessionStorage.getItem('rockfall_token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -29,11 +29,17 @@ apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response && error.response.status === 401) {
-      // Auto logout if unauthorized
-      localStorage.removeItem('rockfall_token');
-      localStorage.removeItem('rockfall_user');
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
+      const reqUrl = error.config?.url || '';
+      const isAuthRoute = reqUrl.includes('/auth/login') || reqUrl.includes('/auth/register');
+      // Only auto-logout and redirect for non-auth endpoints so login/register forms can display error responses
+      if (!isAuthRoute) {
+        localStorage.removeItem('rockfall_token');
+        localStorage.removeItem('rockfall_user');
+        sessionStorage.removeItem('rockfall_token');
+        sessionStorage.removeItem('rockfall_user');
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
       }
     }
     return Promise.reject(error);
@@ -392,6 +398,304 @@ const SEED_ALERTS = [
 ];
 
 // Helper to access LocalStorage with seed fallback
+export function normalizeMine(m) {
+  if (!m) return m;
+  const name = m.name || m.mineName || '';
+  const mineName = m.mineName || m.name || '';
+  return {
+    ...m,
+    id: m.id,
+    name,
+    mineName,
+    location: m.location || '',
+    slopeAngle: m.slopeAngle !== undefined && m.slopeAngle !== null ? Number(m.slopeAngle) : null,
+    status: m.status || 'Active',
+    operator: m.operator || 'National Mining Syndicate',
+    benchHeight: m.benchHeight || '15m',
+    totalSensors: m.totalSensors ?? 0,
+    riskRating: m.riskRating || 'Moderate',
+  };
+}
+
+export function normalizeSensor(s) {
+  if (!s) return s;
+  const name = s.sensorName || s.name || '';
+  const sensorName = s.sensorName || s.name || '';
+  const type = s.sensorType || s.type || 'Inclinometer';
+  const sensorType = s.sensorType || s.type || 'Inclinometer';
+  const status = s.status || 'Active';
+  const mineId = s.mine?.id != null ? s.mine.id : (s.mineId != null ? s.mineId : null);
+  const mineName = s.mine?.mineName || s.mine?.name || s.mineName || '';
+
+  return {
+    ...s,
+    id: s.id,
+    name,
+    sensorName,
+    type,
+    sensorType,
+    status,
+    mineId,
+    mineName,
+    readingInterval: s.readingInterval || '5s',
+    lastCalibration: s.lastCalibration || null,
+  };
+}
+
+export function normalizeSnapshot(s) {
+  if (!s) return s;
+  const id = s.id;
+  const mineId = s.mineId ?? (s.mine?.id ?? null);
+  const groundTilt = Number(s.groundTilt ?? s.ground_tilt ?? 0);
+  const discontinuityAngle = Number(s.discontinuityAngle ?? s.discontinuity_angle ?? 0);
+  const jointSpacing = Number(s.jointSpacing ?? s.joint_spacing ?? 0);
+  const poreWaterPressure = Number(s.poreWaterPressure ?? s.pore_water_pressure ?? 0);
+  const vibrationRmr = Number(s.vibrationRmr ?? s.vibration_rmr ?? 0);
+  const rainfallMm = Number(s.rainfallMm ?? s.rainfall_mm ?? 0);
+  const recordedAt = s.recordedAt ?? s.created_at ?? s.time ?? new Date().toISOString();
+
+  const dt = new Date(recordedAt);
+  const time = !isNaN(dt.getTime())
+    ? dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    : String(recordedAt);
+
+  let status = 'Safe';
+  if (groundTilt > 4.0 || poreWaterPressure > 120.0 || vibrationRmr > 5.0) {
+    status = 'Hazard';
+  } else if (groundTilt > 3.5 || poreWaterPressure > 100.0 || vibrationRmr > 4.0) {
+    status = 'Warning';
+  }
+
+  return {
+    ...s,
+    id,
+    mineId,
+    groundTilt,
+    discontinuityAngle,
+    jointSpacing,
+    poreWaterPressure,
+    vibrationRmr,
+    rainfallMm,
+    recordedAt,
+    time,
+    tilt: groundTilt,
+    discontinuity: discontinuityAngle,
+    spacing: jointSpacing,
+    pressure: poreWaterPressure,
+    vibration: vibrationRmr,
+    rain: rainfallMm,
+    status,
+  };
+}
+
+export function normalizePrediction(p, minesList = []) {
+  if (!p) return p;
+  const id = p.id != null ? p.id : '';
+  const snapshotId = p.snapshotId ?? p.snapshot_id ?? 'N/A';
+  const mineId = p.mineId ?? p.mine_id ?? null;
+
+  const groundTilt = Number(p.groundTilt ?? p.ground_tilt ?? 0);
+  const discontinuityAngle = Number(p.discontinuityAngle ?? p.discontinuity_angle ?? 0);
+  const jointSpacing = Number(p.jointSpacing ?? p.joint_spacing ?? 0);
+  const poreWaterPressure = Number(p.poreWaterPressure ?? p.pore_water_pressure ?? 0);
+  const vibrationRmr = Number(p.vibrationRmr ?? p.vibration_rmr ?? 0);
+  const rainfallMm = Number(p.rainfallMm ?? p.rainfall_mm ?? 0);
+
+  const rawHazard = Number(p.hazardProbability ?? p.hazard_probability ?? 0);
+  const hazardProbability = rawHazard <= 1.0 ? +(rawHazard * 100).toFixed(1) : +rawHazard.toFixed(1);
+  const rawSafe = Number(p.safeProbability ?? p.safe_probability ?? Math.max(0, 100 - hazardProbability));
+  const safeProbability = rawSafe <= 1.0 ? +(rawSafe * 100).toFixed(1) : +rawSafe.toFixed(1);
+
+  // Raw SVM output
+  const rawSvmClass = Number(
+    p.rawSvmClass ?? p.raw_svm_class ?? p.predictedClass ?? p.predicted_class ?? 0
+  );
+  const decisionFunction =
+    p.decisionFunction != null
+      ? Number(p.decisionFunction)
+      : p.decision_function != null
+      ? Number(p.decision_function)
+      : null;
+
+  // Option A: Probability-Aligned Effective Classification
+  // - Below 0.30: SAFE
+  // - 0.30 to below 0.50: LOW
+  // - 0.50 to below 0.80: WARNING
+  // - 0.80 or above: CRITICAL
+  const effectiveClass =
+    p.effectiveClass ||
+    p.effective_class ||
+    (hazardProbability >= 80 ? 'CRITICAL' : hazardProbability >= 50 ? 'WARNING' : hazardProbability >= 30 ? 'LOW' : 'SAFE');
+
+  const alertTriggered = Boolean(p.triggerAlert ?? p.trigger_alert ?? (hazardProbability >= 50.0));
+
+  const createdAt = p.createdAt ?? p.created_at ?? p.timestamp ?? new Date().toISOString();
+  const dt = new Date(createdAt);
+  const timestamp = !isNaN(dt.getTime())
+    ? dt.toISOString().replace('T', ' ').substring(0, 19)
+    : String(createdAt);
+
+  const matchedMine = minesList.find((m) => String(m.id) === String(mineId));
+  const mineName = p.mineName || matchedMine?.name || matchedMine?.mineName || (mineId ? `Mine #${mineId}` : 'Selected Mine');
+
+  return {
+    ...p,
+    id,
+    snapshotId,
+    mineId,
+    mineName,
+    predictedClass: effectiveClass, // Primary prediction badge displays effective classification
+    effectiveClass,
+    rawSvmClass,
+    decisionFunction,
+    hazardProbability,
+    safeProbability,
+    riskLevel: effectiveClass,
+    alertTriggered,
+    timestamp,
+    factors: {
+      groundTilt,
+      discontinuityAngle,
+      jointSpacing,
+      poreWaterPressure,
+      vibrationRMR: vibrationRmr,
+      rainfall: rainfallMm,
+    },
+  };
+}
+
+export function normalizeAlert(a, minesList = []) {
+  if (!a) return a;
+  const id = a.id != null ? a.id : '';
+  const mineId = a.mineId ?? a.mine_id ?? null;
+  const predictionId = a.predictionId ?? a.prediction_id ?? 'N/A';
+  const snapshotId = a.snapshotId ?? a.snapshot_id ?? 'N/A';
+  const riskLevel = (a.riskLevel ?? a.risk_level ?? 'WARNING').toUpperCase();
+
+  const rawHazard = Number(a.hazardProbability ?? a.hazard_probability ?? 0);
+  const hazardProbability = rawHazard <= 1.0 ? +(rawHazard * 100).toFixed(1) : +rawHazard.toFixed(1);
+
+  const rawStatus = String(a.status || 'PENDING').toUpperCase();
+  const status =
+    rawStatus === 'ACKNOWLEDGED'
+      ? 'Acknowledged'
+      : rawStatus === 'RESOLVED'
+      ? 'Resolved'
+      : 'Pending';
+
+  const message = a.message || a.notes || '';
+  const createdAt = a.createdAt ?? a.created_at ?? new Date().toISOString();
+  const dt = new Date(createdAt);
+  const formattedDate = !isNaN(dt.getTime())
+    ? dt.toISOString().replace('T', ' ').substring(0, 19)
+    : String(createdAt);
+
+  const matchedMine = minesList.find((m) => String(m.id) === String(mineId));
+  const mineName = a.mineName || matchedMine?.name || matchedMine?.mineName || (mineId ? `Mine #${mineId}` : 'Mine Site');
+
+  return {
+    ...a,
+    id,
+    mineId,
+    mineName,
+    predictionId,
+    snapshotId,
+    riskLevel,
+    hazardProbability,
+    status,
+    rawStatus,
+    notes: message,
+    message,
+    createdAt: formattedDate,
+    acknowledgedAt: a.acknowledgedAt ?? a.acknowledged_at,
+    resolvedAt: a.resolvedAt ?? a.resolved_at,
+  };
+}
+
+export function normalizeDashboardSummary(raw, minesList = []) {
+  if (!raw) {
+    return {
+      stats: {
+        totalMines: 0,
+        activeMines: 0,
+        totalSensors: 0,
+        activeSensors: 0,
+        totalAlerts: 0,
+        pendingAlerts: 0,
+        acknowledgedAlerts: 0,
+        resolvedAlerts: 0,
+      },
+      latestPrediction: null,
+      recentPredictions: [],
+      riskDistribution: [
+        { name: 'Critical Risk', count: 0, color: '#D83B3B' },
+        { name: 'High Risk', count: 0, color: '#E8A27E' },
+        { name: 'Medium Risk', count: 0, color: '#E39A28' },
+        { name: 'Low / Safe', count: 0, color: '#27865B' },
+      ],
+      mines: minesList,
+      latestSnapshots: [],
+    };
+  }
+
+  const mineStats = raw.mine_stats || raw.mineStats || {};
+  const sensorStats = raw.sensor_stats || raw.sensorStats || {};
+  const alertStats = raw.alert_stats || raw.alertStats || {};
+
+  const totalMines = Number(mineStats.total ?? minesList.length ?? 0);
+  const activeMines = Number(mineStats.active ?? minesList.filter((m) => m.status === 'Active').length ?? 0);
+  const totalSensors = Number(sensorStats.total ?? 0);
+  const activeSensors = Number(sensorStats.active ?? 0);
+  const totalAlerts = Number(alertStats.total ?? 0);
+  const pendingAlerts = Number(alertStats.pending ?? 0);
+  const acknowledgedAlerts = Number(alertStats.acknowledged ?? 0);
+  const resolvedAlerts = Number(alertStats.resolved ?? 0);
+
+  const rawLatestPred = raw.latest_prediction || raw.latestPrediction;
+  const latestPrediction = rawLatestPred ? normalizePrediction(rawLatestPred, minesList) : null;
+
+  const rawRecentPreds = raw.recent_predictions || raw.recentPredictions || [];
+  const recentPredictions = Array.isArray(rawRecentPreds)
+    ? rawRecentPreds.map((p) => normalizePrediction(p, minesList))
+    : [];
+
+  const rawSnapshots = raw.latest_snapshots || raw.latestSnapshots || [];
+  const latestSnapshots = Array.isArray(rawSnapshots)
+    ? rawSnapshots.map(normalizeSnapshot)
+    : [];
+
+  // Risk distribution computed from recent predictions
+  const criticalCount = recentPredictions.filter((p) => p.riskLevel === 'CRITICAL').length;
+  const highCount = recentPredictions.filter((p) => p.riskLevel === 'HIGH' || p.riskLevel === 'WARNING').length;
+  const mediumCount = recentPredictions.filter((p) => p.riskLevel === 'MEDIUM').length;
+  const lowCount = recentPredictions.filter((p) => p.riskLevel === 'LOW' || p.riskLevel === 'SAFE').length;
+
+  const riskDistribution = [
+    { name: 'Critical Risk', count: criticalCount, color: '#D83B3B' },
+    { name: 'High Risk', count: highCount, color: '#E8A27E' },
+    { name: 'Medium Risk', count: mediumCount, color: '#E39A28' },
+    { name: 'Low / Safe', count: lowCount, color: '#27865B' },
+  ];
+
+  return {
+    stats: {
+      totalMines,
+      activeMines,
+      totalSensors,
+      activeSensors,
+      totalAlerts,
+      pendingAlerts,
+      acknowledgedAlerts,
+      resolvedAlerts,
+    },
+    latestPrediction,
+    recentPredictions,
+    riskDistribution,
+    mines: minesList,
+    latestSnapshots,
+  };
+}
+
 function getLocalData(key, seedData) {
   try {
     const raw = localStorage.getItem(`rockfall_${key}`);
@@ -423,20 +727,21 @@ export const apiService = {
   async getMines() {
     if (USE_MOCK) {
       await delay();
-      return getLocalData('mines', SEED_MINES);
+      return getLocalData('mines', SEED_MINES).map(normalizeMine);
     }
     const res = await apiClient.get('/mines');
-    return res.data;
+    return Array.isArray(res.data) ? res.data.map(normalizeMine) : [];
   },
 
   async getMineById(id) {
     if (USE_MOCK) {
       await delay();
       const list = getLocalData('mines', SEED_MINES);
-      return list.find((m) => m.id === id) || null;
+      const found = list.find((m) => String(m.id) === String(id));
+      return found ? normalizeMine(found) : null;
     }
     const res = await apiClient.get(`/mines/${id}`);
-    return res.data;
+    return normalizeMine(res.data);
   },
 
   async createMine(mineData) {
@@ -450,34 +755,47 @@ export const apiService = {
       };
       const updated = [newMine, ...list];
       saveLocalData('mines', updated);
-      return newMine;
+      return normalizeMine(newMine);
     }
-    const res = await apiClient.post('/mines', mineData);
-    return res.data;
+    const payload = {
+      mineName: mineData.mineName || mineData.name,
+      location: mineData.location,
+      slopeAngle: mineData.slopeAngle != null ? parseFloat(mineData.slopeAngle) : null,
+      status: mineData.status || 'Active',
+    };
+    const res = await apiClient.post('/mines', payload);
+    return normalizeMine(res.data);
   },
 
   async updateMine(id, mineData) {
     if (USE_MOCK) {
       await delay();
       const list = getLocalData('mines', SEED_MINES);
-      const updated = list.map((m) => (m.id === id ? { ...m, ...mineData } : m));
+      const updated = list.map((m) => (String(m.id) === String(id) ? { ...m, ...mineData } : m));
       saveLocalData('mines', updated);
-      return updated.find((m) => m.id === id);
+      const found = updated.find((m) => String(m.id) === String(id));
+      return found ? normalizeMine(found) : null;
     }
-    const res = await apiClient.put(`/mines/${id}`, mineData);
-    return res.data;
+    const payload = {
+      mineName: mineData.mineName || mineData.name,
+      location: mineData.location,
+      slopeAngle: mineData.slopeAngle != null ? parseFloat(mineData.slopeAngle) : null,
+      status: mineData.status || 'Active',
+    };
+    const res = await apiClient.put(`/mines/${id}`, payload);
+    return normalizeMine(res.data);
   },
 
   async deleteMine(id) {
     if (USE_MOCK) {
       await delay();
       const list = getLocalData('mines', SEED_MINES);
-      const updated = list.filter((m) => m.id !== id);
+      const updated = list.filter((m) => String(m.id) !== String(id));
       saveLocalData('mines', updated);
       return { success: true, id };
     }
     const res = await apiClient.delete(`/mines/${id}`);
-    return res.data;
+    return res.data || { success: true, id };
   },
 
   // --- SENSORS ---
@@ -485,13 +803,26 @@ export const apiService = {
     if (USE_MOCK) {
       await delay();
       const list = getLocalData('sensors', SEED_SENSORS);
-      if (mineId) {
-        return list.filter((s) => s.mineId === mineId);
-      }
-      return list;
+      const filtered = mineId ? list.filter((s) => String(s.mineId) === String(mineId)) : list;
+      return filtered.map(normalizeSensor);
     }
-    const res = await apiClient.get('/sensors', { params: { mineId } });
-    return res.data;
+    const res = await apiClient.get('/sensors');
+    const raw = Array.isArray(res.data) ? res.data.map(normalizeSensor) : [];
+    if (mineId) {
+      return raw.filter((s) => String(s.mineId) === String(mineId));
+    }
+    return raw;
+  },
+
+  async getSensorById(id) {
+    if (USE_MOCK) {
+      await delay();
+      const list = getLocalData('sensors', SEED_SENSORS);
+      const found = list.find((s) => String(s.id) === String(id));
+      return found ? normalizeSensor(found) : null;
+    }
+    const res = await apiClient.get(`/sensors/${id}`);
+    return normalizeSensor(res.data);
   },
 
   async createSensor(sensorData) {
@@ -505,60 +836,113 @@ export const apiService = {
       const updated = [newSensor, ...list];
       saveLocalData('sensors', updated);
 
-      // Increment mine's sensor count
       const mines = getLocalData('mines', SEED_MINES);
       const updatedMines = mines.map((m) =>
-        m.id === sensorData.mineId ? { ...m, totalSensors: (m.totalSensors || 0) + 1 } : m
+        String(m.id) === String(sensorData.mineId) ? { ...m, totalSensors: (m.totalSensors || 0) + 1 } : m
       );
       saveLocalData('mines', updatedMines);
 
-      return newSensor;
+      return normalizeSensor(newSensor);
     }
-    const res = await apiClient.post('/sensors', sensorData);
-    return res.data;
+    const parsedMineId = Number(sensorData.mineId);
+    const payload = {
+      sensorName: (sensorData.sensorName || sensorData.name || '').trim(),
+      sensorType: sensorData.sensorType || sensorData.type || 'Inclinometer',
+      status: sensorData.status || 'Active',
+      mineId: isNaN(parsedMineId) ? sensorData.mineId : parsedMineId,
+    };
+    const res = await apiClient.post('/sensors', payload);
+    return normalizeSensor(res.data);
   },
 
   async updateSensor(id, sensorData) {
     if (USE_MOCK) {
       await delay();
       const list = getLocalData('sensors', SEED_SENSORS);
-      const updated = list.map((s) => (s.id === id ? { ...s, ...sensorData } : s));
+      const updated = list.map((s) => (String(s.id) === String(id) ? { ...s, ...sensorData } : s));
       saveLocalData('sensors', updated);
-      return updated.find((s) => s.id === id);
+      const found = updated.find((s) => String(s.id) === String(id));
+      return found ? normalizeSensor(found) : null;
     }
-    const res = await apiClient.put(`/sensors/${id}`, sensorData);
-    return res.data;
+    const parsedMineId = Number(sensorData.mineId);
+    const payload = {
+      sensorName: (sensorData.sensorName || sensorData.name || '').trim(),
+      sensorType: sensorData.sensorType || sensorData.type || 'Inclinometer',
+      status: sensorData.status || 'Active',
+      mineId: isNaN(parsedMineId) ? sensorData.mineId : parsedMineId,
+    };
+    const res = await apiClient.put(`/sensors/${id}`, payload);
+    return normalizeSensor(res.data);
   },
 
   async deleteSensor(id) {
     if (USE_MOCK) {
       await delay();
       const list = getLocalData('sensors', SEED_SENSORS);
-      const target = list.find((s) => s.id === id);
-      const updated = list.filter((s) => s.id !== id);
+      const target = list.find((s) => String(s.id) === String(id));
+      const updated = list.filter((s) => String(s.id) !== String(id));
       saveLocalData('sensors', updated);
 
       if (target?.mineId) {
         const mines = getLocalData('mines', SEED_MINES);
         const updatedMines = mines.map((m) =>
-          m.id === target.mineId ? { ...m, totalSensors: Math.max(0, (m.totalSensors || 1) - 1) } : m
+          String(m.id) === String(target.mineId) ? { ...m, totalSensors: Math.max(0, (m.totalSensors || 1) - 1) } : m
         );
         saveLocalData('mines', updatedMines);
       }
       return { success: true, id };
     }
     const res = await apiClient.delete(`/sensors/${id}`);
-    return res.data;
+    return res.data || { success: true, id };
   },
 
   // --- LIVE MONITORING & SNAPSHOTS ---
+  async getMonitoringSnapshotsByMine(mineId) {
+    if (USE_MOCK) {
+      await delay();
+      return [];
+    }
+    const res = await apiClient.get(`/monitoring-snapshots/mine/${mineId}`);
+    return Array.isArray(res.data) ? res.data.map(normalizeSnapshot) : [];
+  },
+
+  async getLatestMonitoringSnapshot(mineId) {
+    if (USE_MOCK) {
+      await delay();
+      return null;
+    }
+    const res = await apiClient.get(`/monitoring-snapshots/mine/${mineId}/latest`);
+    return normalizeSnapshot(res.data);
+  },
+
+  async createMonitoringSnapshot(snapshotData) {
+    if (USE_MOCK) {
+      await delay();
+      return normalizeSnapshot(snapshotData);
+    }
+    const payload = {
+      mineId: Number(snapshotData.mineId),
+      groundTilt: parseFloat(snapshotData.groundTilt ?? snapshotData.tilt),
+      discontinuityAngle: parseFloat(snapshotData.discontinuityAngle ?? snapshotData.discontinuity),
+      jointSpacing: parseFloat(snapshotData.jointSpacing ?? snapshotData.spacing),
+      poreWaterPressure: parseFloat(snapshotData.poreWaterPressure ?? snapshotData.pressure),
+      vibrationRmr: parseFloat(snapshotData.vibrationRmr ?? snapshotData.vibration),
+      rainfallMm: parseFloat(snapshotData.rainfallMm ?? snapshotData.rainfall ?? snapshotData.rain),
+    };
+    const res = await apiClient.post('/monitoring-snapshots', payload);
+    return normalizeSnapshot(res.data);
+  },
+
+  async predictMonitoringSnapshot(snapshotId) {
+    const res = await apiClient.post(`/monitoring-snapshots/${snapshotId}/predict`);
+    return normalizePrediction(res.data);
+  },
+
   async getLiveMonitoring(mineId = 'MINE-001') {
     if (USE_MOCK) {
       await delay();
-      // Generate realistic dynamic metrics with baseline variations
       const now = new Date();
       const timestamp = now.toLocaleTimeString('en-US', { hour12: false });
-      
       const isCriticalMine = mineId === 'MINE-003';
       const isHighMine = mineId === 'MINE-001';
 
@@ -569,7 +953,6 @@ export const apiService = {
       const vibrationRMR = isCriticalMine ? 5.9 : isHighMine ? 4.1 : 1.2;
       const rainfall = isCriticalMine ? 34.0 : isHighMine ? 19.5 : 2.0;
 
-      // History series for Recharts
       const historySeries = [];
       for (let i = 11; i >= 0; i--) {
         const past = new Date(now.getTime() - i * 5 * 60 * 1000);
@@ -584,7 +967,6 @@ export const apiService = {
         });
       }
 
-      // Recent Snapshots table rows
       const snapshots = [
         { id: `SNAP-${mineId}-1`, time: '14:45:00', tilt: 4.82, discontinuity: 63.5, spacing: 0.16, pressure: 144.2, vibration: 5.9, rain: 34.0, status: 'Hazard' },
         { id: `SNAP-${mineId}-2`, time: '14:40:00', tilt: 4.75, discontinuity: 63.2, spacing: 0.17, pressure: 141.0, vibration: 5.6, rain: 32.5, status: 'Hazard' },
@@ -609,14 +991,96 @@ export const apiService = {
         snapshots,
       };
     }
-    const res = await apiClient.get(`/monitoring/${mineId}`);
-    return res.data;
+
+    // Live mode: query actual monitoring-snapshots
+    const res = await apiClient.get(`/monitoring-snapshots/mine/${mineId}`);
+    const rawSnapshots = Array.isArray(res.data) ? res.data.map(normalizeSnapshot) : [];
+
+    if (rawSnapshots.length === 0) {
+      return {
+        mineId,
+        timestamp: 'No telemetry recorded',
+        metrics: {
+          groundTilt: { value: 0, unit: '°', threshold: 3.5, status: 'normal' },
+          discontinuityAngle: { value: 0, unit: '°', threshold: 50.0, status: 'normal' },
+          jointSpacing: { value: 0, unit: 'm', threshold: 0.3, status: 'normal' },
+          poreWaterPressure: { value: 0, unit: 'kPa', threshold: 100.0, status: 'normal' },
+          vibrationRMR: { value: 0, unit: 'mm/s', threshold: 4.0, status: 'normal' },
+          rainfall: { value: 0, unit: 'mm/h', threshold: 25.0, status: 'normal' },
+        },
+        historySeries: [],
+        snapshots: [],
+      };
+    }
+
+    const latest = rawSnapshots[0];
+    const dt = new Date(latest.recordedAt);
+    const timestamp = !isNaN(dt.getTime())
+      ? dt.toLocaleTimeString('en-US', { hour12: false })
+      : String(latest.recordedAt);
+
+    const metrics = {
+      groundTilt: {
+        value: latest.groundTilt,
+        unit: '°',
+        threshold: 3.5,
+        status: latest.groundTilt > 3.5 ? 'danger' : 'normal',
+      },
+      discontinuityAngle: {
+        value: latest.discontinuityAngle,
+        unit: '°',
+        threshold: 50.0,
+        status: latest.discontinuityAngle > 50.0 ? 'danger' : 'normal',
+      },
+      jointSpacing: {
+        value: latest.jointSpacing,
+        unit: 'm',
+        threshold: 0.3,
+        status: latest.jointSpacing < 0.3 ? 'danger' : 'normal',
+      },
+      poreWaterPressure: {
+        value: latest.poreWaterPressure,
+        unit: 'kPa',
+        threshold: 100.0,
+        status: latest.poreWaterPressure > 100.0 ? 'danger' : 'normal',
+      },
+      vibrationRMR: {
+        value: latest.vibrationRmr,
+        unit: 'mm/s',
+        threshold: 4.0,
+        status: latest.vibrationRmr > 4.0 ? 'warning' : 'normal',
+      },
+      rainfall: {
+        value: latest.rainfallMm,
+        unit: 'mm/h',
+        threshold: 25.0,
+        status: latest.rainfallMm > 25.0 ? 'danger' : 'normal',
+      },
+    };
+
+    // Recharts requires chronological order (oldest first)
+    const chronological = [...rawSnapshots].slice(0, 20).reverse();
+    const historySeries = chronological.map((s) => ({
+      time: s.time,
+      groundTilt: s.groundTilt,
+      vibration: s.vibrationRmr,
+      porePressure: s.poreWaterPressure,
+      rainfall: s.rainfallMm,
+    }));
+
+    return {
+      mineId,
+      timestamp,
+      metrics,
+      historySeries,
+      snapshots: rawSnapshots,
+    };
   },
 
   // --- PREDICTIONS ---
   async runRockfallPrediction(inputData) {
     if (USE_MOCK) {
-      await delay(400); // realistic ML compute latency
+      await delay(400);
       const tilt = parseFloat(inputData.groundTilt) || 0;
       const discontinuity = parseFloat(inputData.discontinuityAngle) || 0;
       const spacing = parseFloat(inputData.jointSpacing) || 1.0;
@@ -624,20 +1088,21 @@ export const apiService = {
       const vibration = parseFloat(inputData.vibrationRMR) || 0;
       const rainfall = parseFloat(inputData.rainfall) || 0;
 
-      // Deterministic geotechnical ML heuristic based on empirical rock mechanics
-      let riskScore = (tilt / 6.0) * 0.25 + 
-                       (discontinuity / 70.0) * 0.20 + 
-                       (Math.max(0, 1.5 - spacing) / 1.5) * 0.15 + 
-                       (pressure / 160.0) * 0.20 + 
-                       (vibration / 8.0) * 0.10 + 
-                       (rainfall / 50.0) * 0.10;
+      let riskScore =
+        (tilt / 6.0) * 0.25 +
+        (discontinuity / 70.0) * 0.2 +
+        (Math.max(0, 1.5 - spacing) / 1.5) * 0.15 +
+        (pressure / 160.0) * 0.2 +
+        (vibration / 8.0) * 0.1 +
+        (rainfall / 50.0) * 0.1;
 
       riskScore = Math.min(0.99, Math.max(0.05, riskScore));
       const hazardProb = +(riskScore * 100).toFixed(1);
       const safeProb = +(100 - hazardProb).toFixed(1);
 
       const isHazard = hazardProb >= 50.0;
-      const riskLevel = hazardProb >= 80 ? 'CRITICAL' : hazardProb >= 55 ? 'HIGH' : hazardProb >= 35 ? 'MEDIUM' : 'LOW';
+      const riskLevel =
+        hazardProb >= 80 ? 'CRITICAL' : hazardProb >= 55 ? 'HIGH' : hazardProb >= 35 ? 'MEDIUM' : 'LOW';
       const alertTriggered = isHazard;
 
       const predictions = getLocalData('predictions', SEED_PREDICTIONS);
@@ -666,10 +1131,8 @@ export const apiService = {
         },
       };
 
-      // Store in predictions history
       saveLocalData('predictions', [newPrediction, ...predictions]);
 
-      // If alert triggered, automatically post to alerts list
       if (alertTriggered) {
         const alerts = getLocalData('alerts', SEED_ALERTS);
         const newAlert = {
@@ -689,39 +1152,94 @@ export const apiService = {
 
       return newPrediction;
     }
-    const res = await apiClient.post('/predict', inputData);
-    return res.data;
+
+    const parsedMineId = Number(inputData.mineId);
+    const parsedSnapshotId = Number(inputData.snapshotId);
+    const payload = {
+      mineId: isNaN(parsedMineId) ? null : parsedMineId,
+      snapshotId: isNaN(parsedSnapshotId) ? null : parsedSnapshotId,
+      groundTilt: parseFloat(inputData.groundTilt),
+      discontinuityAngle: parseFloat(inputData.discontinuityAngle),
+      jointSpacing: parseFloat(inputData.jointSpacing),
+      poreWaterPressure: parseFloat(inputData.poreWaterPressure),
+      vibrationRmr: parseFloat(inputData.vibrationRMR ?? inputData.vibrationRmr),
+      rainfallMm: parseFloat(inputData.rainfall ?? inputData.rainfallMm),
+    };
+
+    const res = await apiClient.post('/predictions/predict', payload);
+    return normalizePrediction(res.data);
   },
 
-  async getPredictions() {
+  async getPredictions(limit = null) {
     if (USE_MOCK) {
       await delay();
       return getLocalData('predictions', SEED_PREDICTIONS);
     }
-    const res = await apiClient.get('/predictions');
-    return res.data;
+    const params = limit ? { limit } : {};
+    const res = await apiClient.get('/predictions/history', { params });
+    return Array.isArray(res.data) ? res.data.map((p) => normalizePrediction(p)) : [];
+  },
+
+  async getPredictionHistory(limit = null) {
+    return this.getPredictions(limit);
+  },
+
+  async checkMlHealth() {
+    if (USE_MOCK) {
+      await delay();
+      return { status: 'ok', modelLoaded: true };
+    }
+    const res = await apiClient.get('/predictions/ml-health');
+    return {
+      status: res.data?.status || 'UNKNOWN',
+      modelLoaded: Boolean(res.data?.model_loaded ?? res.data?.modelLoaded),
+    };
   },
 
   // --- ALERTS ---
-  async getAlerts() {
+  async getAlerts(params = {}) {
     if (USE_MOCK) {
       await delay();
-      return getLocalData('alerts', SEED_ALERTS);
+      const list = getLocalData('alerts', SEED_ALERTS);
+      let filtered = list;
+      if (params.mineId && params.mineId !== 'ALL') {
+        filtered = filtered.filter((a) => String(a.mineId) === String(params.mineId));
+      }
+      if (params.status && params.status !== 'ALL') {
+        filtered = filtered.filter((a) => a.status.toLowerCase() === params.status.toLowerCase());
+      }
+      return filtered;
     }
-    const res = await apiClient.get('/alerts');
-    return res.data;
+
+    let url = '/alerts';
+    if (params.mineId && params.mineId !== 'ALL') {
+      url = `/alerts/mine/${params.mineId}`;
+    } else if (params.status && params.status !== 'ALL') {
+      url = `/alerts/status/${params.status.toUpperCase()}`;
+    }
+
+    const res = await apiClient.get(url);
+    return Array.isArray(res.data) ? res.data.map((a) => normalizeAlert(a)) : [];
+  },
+
+  async getAlertsByMine(mineId) {
+    return this.getAlerts({ mineId });
+  },
+
+  async getAlertsByStatus(status) {
+    return this.getAlerts({ status });
   },
 
   async acknowledgeAlert(id) {
     if (USE_MOCK) {
       await delay();
       const list = getLocalData('alerts', SEED_ALERTS);
-      const updated = list.map((a) => (a.id === id ? { ...a, status: 'Acknowledged' } : a));
+      const updated = list.map((a) => (String(a.id) === String(id) ? { ...a, status: 'Acknowledged' } : a));
       saveLocalData('alerts', updated);
-      return updated.find((a) => a.id === id);
+      return updated.find((a) => String(a.id) === String(id));
     }
-    const res = await apiClient.patch(`/alerts/${id}/acknowledge`);
-    return res.data;
+    const res = await apiClient.put(`/alerts/${id}/acknowledge`);
+    return normalizeAlert(res.data);
   },
 
   async resolveAlert(id, notes = '') {
@@ -729,16 +1247,22 @@ export const apiService = {
       await delay();
       const list = getLocalData('alerts', SEED_ALERTS);
       const updated = list.map((a) =>
-        a.id === id ? { ...a, status: 'Resolved', resolutionNotes: notes || 'Resolved by operator' } : a
+        String(a.id) === String(id)
+          ? { ...a, status: 'Resolved', resolutionNotes: notes || 'Resolved by operator' }
+          : a
       );
       saveLocalData('alerts', updated);
-      return updated.find((a) => a.id === id);
+      return updated.find((a) => String(a.id) === String(id));
     }
-    const res = await apiClient.patch(`/alerts/${id}/resolve`, { notes });
-    return res.data;
+    const res = await apiClient.put(`/alerts/${id}/resolve`);
+    return normalizeAlert(res.data);
   },
 
   // --- DASHBOARD OVERVIEW ---
+  async getDashboardSummary() {
+    return this.getDashboardStats();
+  },
+
   async getDashboardStats() {
     if (USE_MOCK) {
       await delay();
@@ -786,8 +1310,13 @@ export const apiService = {
         mines,
       };
     }
-    const res = await apiClient.get('/dashboard/stats');
-    return res.data;
+
+    const [summaryRes, minesRes] = await Promise.all([
+      apiClient.get('/dashboard/summary'),
+      apiClient.get('/mines'),
+    ]);
+    const minesList = Array.isArray(minesRes.data) ? minesRes.data.map(normalizeMine) : [];
+    return normalizeDashboardSummary(summaryRes.data, minesList);
   },
 };
 

@@ -37,22 +37,26 @@ def predict_rockfall_risk(input_features):
 
     # Calculate probabilities: Class 0 (Safe), Class 1 (Rockfall Hazard)
     probabilities = model.predict_proba(scaled_features)[0]
-    safe_prob = float(probabilities[0])
-    hazard_prob = float(probabilities[1])
+    classes = list(model.classes_)
+    safe_prob = float(probabilities[classes.index(0)])
+    hazard_prob = float(probabilities[classes.index(1)])
 
-    # Class-Weighted SVM prediction based on standard 0.5 decision boundary
-    predicted_class = int(model.predict(scaled_features)[0])
+    # Raw SVM hyperplane prediction and decision function
+    raw_svm_class = int(model.predict(scaled_features)[0])
+    decision_func = float(model.decision_function(scaled_features)[0])
 
-    # Threshold-based alerting logic (> 80% confidence)
-    alert_required = hazard_prob >= 0.80
-
-    # Risk level classification for UI display
+    # Probability-aligned effective classification
     if hazard_prob >= 0.80:
-        risk_level = "CRITICAL"
+        effective_class = "CRITICAL"
     elif hazard_prob >= 0.50:
-        risk_level = "WARNING"
+        effective_class = "WARNING"
+    elif hazard_prob >= 0.30:
+        effective_class = "LOW"
     else:
-        risk_level = "SAFE"
+        effective_class = "SAFE"
+
+    risk_level = effective_class
+    alert_required = hazard_prob >= 0.50
 
     # Construct JSON response structure
     response = {
@@ -67,7 +71,10 @@ def predict_rockfall_risk(input_features):
             "rainfall_mm": input_features[5]
         },
         "prediction": {
-            "predicted_class": predicted_class,  # 0: Safe, 1: Rockfall Risk
+            "predicted_class": raw_svm_class,  # 0: Safe, 1: Rockfall Risk
+            "raw_svm_class": raw_svm_class,
+            "effective_class": effective_class,
+            "decision_function": round(decision_func, 4),
             "hazard_probability": round(hazard_prob, 4),
             "safe_probability": round(safe_prob, 4),
             "risk_level": risk_level,

@@ -130,15 +130,17 @@ export default function Register() {
 
             <div className="form-group">
               <label className="form-label">System Access Role</label>
-              <select
-                name="role"
+              <input
+                type="text"
                 className="form-control"
-                value={formData.role}
-                onChange={handleChange}
-              >
-                <option value="USER">Field Operator (Read-only + Prediction access)</option>
-                <option value="ADMIN">Geotechnical Engineer / Administrator (Full CRUD & Alert Resolution)</option>
-              </select>
+                value="Field Operator (USER)"
+                readOnly
+                disabled
+                style={{ backgroundColor: 'var(--surface)', cursor: 'not-allowed' }}
+              />
+              <div className="form-hint" style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                Standard role assigned upon public registration. Administrator accounts are securely provisioned by backend system security.
+              </div>
             </div>
 
             <div className="form-group">

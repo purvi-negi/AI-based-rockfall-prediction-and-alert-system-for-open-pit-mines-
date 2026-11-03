@@ -14,7 +14,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 
 export default function Navbar({ onMobileMenuToggle }) {
-  const { user, logout, switchRole, isAdmin } = useAuth();
+  const { user, logout, isAdmin } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -71,10 +71,6 @@ export default function Navbar({ onMobileMenuToggle }) {
     navigate('/login');
   };
 
-  const handleRoleToggle = () => {
-    const nextRole = isAdmin ? 'USER' : 'ADMIN';
-    switchRole(nextRole);
-  };
 
   const notifications = [
     {
@@ -136,15 +132,14 @@ export default function Navbar({ onMobileMenuToggle }) {
           />
         </div>
 
-        {/* Role Switcher Pill - Easy Demo presentation feature */}
-        <button
-          onClick={handleRoleToggle}
+        {/* Authenticated Role Badge */}
+        <div
           className={`role-badge-pill ${isAdmin ? 'role-badge-admin' : 'role-badge-user'}`}
-          title="Click to toggle between ADMIN and USER roles for presentation testing"
+          title={`Authenticated Role: ${user?.role || 'USER'}`}
         >
           {isAdmin ? <ShieldCheck size={14} /> : <Shield size={14} />}
-          <span>Role: {user?.role || 'ADMIN'}</span>
-        </button>
+          <span>Role: {user?.role || 'USER'}</span>
+        </div>
 
         {/* Notification Bell */}
         <div className="user-menu-wrapper" ref={notifRef}>

@@ -47,6 +47,15 @@ public class PredictionHistory {
     @Column(name = "predicted_class", nullable = false)
     private Integer predictedClass;
 
+    @Column(name = "raw_svm_class")
+    private Integer rawSvmClass;
+
+    @Column(name = "effective_class", length = 32)
+    private String effectiveClass;
+
+    @Column(name = "decision_function")
+    private Double decisionFunction;
+
     @Column(name = "hazard_probability", nullable = false)
     private Double hazardProbability;
 

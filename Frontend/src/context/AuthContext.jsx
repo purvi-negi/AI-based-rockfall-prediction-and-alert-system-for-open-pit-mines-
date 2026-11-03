@@ -9,7 +9,7 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check initial user from storage or demo seed
+    // Check initial user from active storage
     const currentUser = authService.getCurrentUser();
     setUser(currentUser);
     setLoading(false);
@@ -26,10 +26,10 @@ export function AuthProvider({ children }) {
     }
   };
 
-  const register = async (userData) => {
+  const register = async (userData, rememberMe = true) => {
     setLoading(true);
     try {
-      const response = await authService.register(userData);
+      const response = await authService.register(userData, rememberMe);
       setUser(response.user);
       return response;
     } finally {
@@ -42,11 +42,6 @@ export function AuthProvider({ children }) {
     setUser(null);
   };
 
-  const switchRole = (newRole) => {
-    const updated = authService.switchUserRole(newRole);
-    setUser(updated);
-  };
-
   const value = {
     user,
     loading,
@@ -55,7 +50,6 @@ export function AuthProvider({ children }) {
     login,
     register,
     logout,
-    switchRole,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

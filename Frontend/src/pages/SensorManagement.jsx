@@ -45,18 +45,26 @@ export default function SensorManagement() {
   const [formErrors, setFormErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState(null);
+  const [errorMsg, setErrorMsg] = useState(null);
 
   const fetchData = async () => {
     setLoading(true);
+    setErrorMsg(null);
     try {
       const [sensorsRes, minesRes] = await Promise.all([
         apiService.getSensors(),
         apiService.getMines(),
       ]);
-      setSensors(sensorsRes);
-      setMines(minesRes);
+      setSensors(Array.isArray(sensorsRes) ? sensorsRes : []);
+      setMines(Array.isArray(minesRes) ? minesRes : []);
     } catch (err) {
-      console.error(err);
+      console.error('Failed to load sensor or mine telemetry:', err);
+      const apiErr =
+        err.response?.data?.message ||
+        err.response?.data?.error ||
+        err.message ||
+        'Failed to load telemetry sensor data.';
+      setErrorMsg(apiErr);
     } finally {
       setLoading(false);
     }
@@ -70,7 +78,7 @@ export default function SensorManagement() {
     setFormData({
       name: '',
       type: 'Inclinometer',
-      mineId: mines[0]?.id || '',
+      mineId: mines.length > 0 ? String(mines[0].id) : '',
       status: 'Active',
       readingInterval: '5s',
     });
@@ -81,10 +89,10 @@ export default function SensorManagement() {
   const handleOpenEdit = (sensor) => {
     setSelectedSensor(sensor);
     setFormData({
-      name: sensor.name,
-      type: sensor.type,
-      mineId: sensor.mineId,
-      status: sensor.status,
+      name: sensor.name || sensor.sensorName || '',
+      type: sensor.type || sensor.sensorType || 'Inclinometer',
+      mineId: sensor.mineId != null ? String(sensor.mineId) : (mines.length > 0 ? String(mines[0].id) : ''),
+      status: sensor.status || 'Active',
       readingInterval: sensor.readingInterval || '5s',
     });
     setFormErrors({});
@@ -93,12 +101,14 @@ export default function SensorManagement() {
 
   const handleOpenDelete = (sensor) => {
     setSelectedSensor(sensor);
+    setFormErrors({});
     setModalMode('delete');
   };
 
   const closeModal = () => {
     setModalMode(null);
     setSelectedSensor(null);
+    setFormErrors({});
   };
 
   const validate = () => {
@@ -113,11 +123,18 @@ export default function SensorManagement() {
     e.preventDefault();
     if (!validate()) return;
     setSubmitting(true);
+    setFormErrors({});
     try {
-      const targetMine = mines.find((m) => m.id === formData.mineId);
+      const targetMine = mines.find((m) => String(m.id) === String(formData.mineId));
       const payload = {
-        ...formData,
-        mineName: targetMine ? targetMine.name : 'Unassigned',
+        name: formData.name.trim(),
+        sensorName: formData.name.trim(),
+        type: formData.type,
+        sensorType: formData.type,
+        status: formData.status,
+        mineId: formData.mineId,
+        mineName: targetMine ? (targetMine.name || targetMine.mineName) : '',
+        readingInterval: formData.readingInterval,
       };
 
       if (modalMode === 'add') {
@@ -128,9 +145,15 @@ export default function SensorManagement() {
         showNotification('Sensor parameters updated.');
       }
       closeModal();
-      fetchData();
+      await fetchData();
     } catch (err) {
-      console.error(err);
+      console.error('Failed to save sensor:', err);
+      const apiErr =
+        err.response?.data?.message ||
+        err.response?.data?.error ||
+        err.message ||
+        'Failed to save sensor configuration. Please verify input and try again.';
+      setFormErrors((prev) => ({ ...prev, submit: apiErr }));
     } finally {
       setSubmitting(false);
     }
@@ -139,13 +162,20 @@ export default function SensorManagement() {
   const handleConfirmDelete = async () => {
     if (!selectedSensor) return;
     setSubmitting(true);
+    setFormErrors({});
     try {
       await apiService.deleteSensor(selectedSensor.id);
-      showNotification(`Sensor ${selectedSensor.id} removed from network.`);
+      showNotification(`Sensor ${selectedSensor.name || selectedSensor.sensorName || selectedSensor.id} removed from network.`);
       closeModal();
-      fetchData();
+      await fetchData();
     } catch (err) {
-      console.error(err);
+      console.error('Failed to delete sensor:', err);
+      const apiErr =
+        err.response?.data?.message ||
+        err.response?.data?.error ||
+        err.message ||
+        'Failed to delete sensor. Please check system status and try again.';
+      setFormErrors((prev) => ({ ...prev, submit: apiErr }));
     } finally {
       setSubmitting(false);
     }
@@ -158,12 +188,13 @@ export default function SensorManagement() {
 
   // Filtered sensors
   const filteredSensors = sensors.filter((sensor) => {
+    const q = searchQuery.toLowerCase();
     const matchesSearch =
-      sensor.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      sensor.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (sensor.mineName && sensor.mineName.toLowerCase().includes(searchQuery.toLowerCase()));
-    const matchesType = typeFilter === 'ALL' || sensor.type === typeFilter;
-    const matchesMine = mineFilter === 'ALL' || sensor.mineId === mineFilter;
+      (sensor.name || sensor.sensorName || '').toLowerCase().includes(q) ||
+      String(sensor.id ?? '').toLowerCase().includes(q) ||
+      (sensor.mineName && sensor.mineName.toLowerCase().includes(q));
+    const matchesType = typeFilter === 'ALL' || sensor.type === typeFilter || sensor.sensorType === typeFilter;
+    const matchesMine = mineFilter === 'ALL' || String(sensor.mineId) === String(mineFilter);
     return matchesSearch && matchesType && matchesMine;
   });
 
@@ -171,7 +202,7 @@ export default function SensorManagement() {
     {
       header: 'Sensor ID',
       accessor: 'id',
-      render: (val) => <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{val}</span>,
+      render: (val) => <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>#{val}</span>,
     },
     {
       header: 'Sensor Name',
@@ -180,7 +211,7 @@ export default function SensorManagement() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <Radio size={15} style={{ color: 'var(--primary)' }} />
           <div>
-            <div style={{ fontWeight: 600 }}>{val}</div>
+            <div style={{ fontWeight: 600 }}>{val || row.sensorName}</div>
             <div style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>
               Interval: {row.readingInterval || '5s'}
             </div>
@@ -191,17 +222,23 @@ export default function SensorManagement() {
     {
       header: 'Sensor Type',
       accessor: 'type',
-      render: (val) => <span className="badge badge-primary">{val}</span>,
+      render: (val, row) => <span className="badge badge-primary">{val || row.sensorType}</span>,
     },
     {
       header: 'Associated Mine',
       accessor: 'mineName',
-      render: (val, row) => (
-        <div>
-          <div style={{ fontWeight: 500 }}>{val || row.mineId}</div>
-          <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{row.mineId}</div>
-        </div>
-      ),
+      render: (val, row) => {
+        const associatedMine = mines.find((m) => String(m.id) === String(row.mineId));
+        const displayName = val || associatedMine?.name || associatedMine?.mineName || (row.mineId ? `Mine #${row.mineId}` : 'Unassigned');
+        return (
+          <div>
+            <div style={{ fontWeight: 500 }}>{displayName}</div>
+            {row.mineId && (
+              <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Mine ID: #{row.mineId}</div>
+            )}
+          </div>
+        );
+      },
     },
     {
       header: 'Telemetry Status',
@@ -260,6 +297,13 @@ export default function SensorManagement() {
         </div>
       )}
 
+      {errorMsg && (
+        <div className="alert-banner alert-banner-danger" style={{ marginBottom: '16px' }}>
+          <AlertTriangle size={18} />
+          <span>{errorMsg}</span>
+        </div>
+      )}
+
       {/* TOOLBAR */}
       <div className="toolbar-wrap">
         <div className="toolbar-actions">
@@ -299,7 +343,7 @@ export default function SensorManagement() {
             <option value="ALL">All Associated Mines</option>
             {mines.map((m) => (
               <option key={m.id} value={m.id}>
-                {m.name}
+                {m.name || m.mineName} (#{m.id})
               </option>
             ))}
           </select>
@@ -334,7 +378,7 @@ export default function SensorManagement() {
         <div className="modal-overlay" onClick={closeModal}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>{modalMode === 'add' ? 'Install New Sensor' : `Edit: ${selectedSensor?.name}`}</h3>
+              <h3>{modalMode === 'add' ? 'Install New Sensor' : `Edit: ${selectedSensor?.name || selectedSensor?.sensorName || selectedSensor?.id}`}</h3>
               <button className="btn-icon" onClick={closeModal}>
                 <X size={18} />
               </button>
@@ -342,6 +386,12 @@ export default function SensorManagement() {
 
             <form onSubmit={handleSubmit}>
               <div className="modal-body">
+                {formErrors.submit && (
+                  <div className="alert-banner alert-banner-danger" style={{ marginBottom: '14px' }}>
+                    <AlertTriangle size={16} />
+                    <span>{formErrors.submit}</span>
+                  </div>
+                )}
                 <div className="form-group">
                   <label className="form-label">Sensor Identifier / Label</label>
                   <input
@@ -377,9 +427,12 @@ export default function SensorManagement() {
                       value={formData.mineId}
                       onChange={(e) => setFormData({ ...formData, mineId: e.target.value })}
                     >
+                      {mines.length === 0 && (
+                        <option value="" disabled>No mines available</option>
+                      )}
                       {mines.map((m) => (
                         <option key={m.id} value={m.id}>
-                          {m.name}
+                          {m.name || m.mineName} (#{m.id})
                         </option>
                       ))}
                     </select>
@@ -442,6 +495,12 @@ export default function SensorManagement() {
             </div>
 
             <div className="modal-body">
+              {formErrors.submit && (
+                <div className="alert-banner alert-banner-danger" style={{ marginBottom: '14px' }}>
+                  <AlertTriangle size={16} />
+                  <span>{formErrors.submit}</span>
+                </div>
+              )}
               <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-start' }}>
                 <div
                   style={{
@@ -460,10 +519,10 @@ export default function SensorManagement() {
                 </div>
                 <div>
                   <p style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '6px' }}>
-                    Remove sensor {selectedSensor.name}?
+                    Remove sensor {selectedSensor.name || selectedSensor.sensorName} (ID: #{selectedSensor.id})?
                   </p>
                   <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                    Deleting this sensor will disconnect telemetry data streaming from {selectedSensor.mineName}.
+                    Deleting this sensor will disconnect telemetry data streaming from {selectedSensor.mineName || `Mine #${selectedSensor.mineId}`}.
                   </p>
                 </div>
               </div>

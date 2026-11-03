@@ -8,6 +8,7 @@ import {
   CloudRain,
   Clock,
   Radio,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -28,12 +29,13 @@ import { apiService } from '../services/api';
 
 export default function LiveMonitoring() {
   const [mines, setMines] = useState([]);
-  const [selectedMineId, setSelectedMineId] = useState('MINE-001');
+  const [selectedMineId, setSelectedMineId] = useState('');
   const [telemetry, setTelemetry] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [errorMsg, setErrorMsg] = useState(null);
 
-  // Initial load
+  // Initial load: fetch mines list
   useEffect(() => {
     async function init() {
       try {
@@ -41,24 +43,31 @@ export default function LiveMonitoring() {
         setMines(mineList);
         if (mineList.length > 0) {
           setSelectedMineId(mineList[0].id);
+        } else {
+          setLoading(false);
         }
       } catch (e) {
         console.error(e);
+        setErrorMsg('Failed to fetch mines list.');
+        setLoading(false);
       }
     }
     init();
   }, []);
 
-  // Fetch telemetry when mine changes
+  // Fetch telemetry when mine changes or on poll
   const fetchTelemetry = async (mineId, isManualRefresh = false) => {
+    if (!mineId) return;
     if (isManualRefresh) setRefreshing(true);
     else setLoading(true);
 
     try {
+      setErrorMsg(null);
       const res = await apiService.getLiveMonitoring(mineId);
       setTelemetry(res);
     } catch (err) {
       console.error(err);
+      setErrorMsg(err?.response?.data?.message || err?.message || 'Failed to fetch telemetry data.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -66,21 +75,39 @@ export default function LiveMonitoring() {
   };
 
   useEffect(() => {
-    if (selectedMineId) {
-      fetchTelemetry(selectedMineId);
-    }
+    if (!selectedMineId) return;
+    fetchTelemetry(selectedMineId);
+
+    // Auto-poll telemetry every 10 seconds
+    const interval = setInterval(() => {
+      fetchTelemetry(selectedMineId, true);
+    }, 10000);
+
+    return () => clearInterval(interval);
   }, [selectedMineId]);
 
   const handleRefresh = () => {
-    fetchTelemetry(selectedMineId, true);
+    if (selectedMineId) {
+      fetchTelemetry(selectedMineId, true);
+    }
   };
 
   if (loading) {
     return <Loading fullPage message="Connecting to IoT telemetry stream..." />;
   }
 
-  const { metrics, historySeries, snapshots, timestamp } = telemetry || {};
-  const currentMine = mines.find((m) => m.id === selectedMineId);
+  const currentMine = mines.find((m) => String(m.id) === String(selectedMineId));
+  const metrics = telemetry?.metrics || {
+    groundTilt: { value: '—', unit: '°', threshold: 3.5, status: 'normal' },
+    discontinuityAngle: { value: '—', unit: '°', threshold: 50.0, status: 'normal' },
+    jointSpacing: { value: '—', unit: 'm', threshold: 0.3, status: 'normal' },
+    poreWaterPressure: { value: '—', unit: 'kPa', threshold: 100.0, status: 'normal' },
+    vibrationRMR: { value: '—', unit: 'mm/s', threshold: 4.0, status: 'normal' },
+    rainfall: { value: '—', unit: 'mm/h', threshold: 25.0, status: 'normal' },
+  };
+  const historySeries = telemetry?.historySeries || [];
+  const snapshots = telemetry?.snapshots || [];
+  const timestamp = telemetry?.timestamp || 'No telemetry recorded';
 
   // Columns for Snapshot History Table
   const snapshotColumns = [
@@ -142,6 +169,13 @@ export default function LiveMonitoring() {
 
   return (
     <div>
+      {errorMsg && (
+        <div className="alert-banner alert-banner-danger" style={{ marginBottom: '16px' }}>
+          <AlertTriangle size={18} />
+          <span>{errorMsg}</span>
+        </div>
+      )}
+
       {/* HEADER CONTROLS */}
       <div className="toolbar-wrap" style={{ marginBottom: '20px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
