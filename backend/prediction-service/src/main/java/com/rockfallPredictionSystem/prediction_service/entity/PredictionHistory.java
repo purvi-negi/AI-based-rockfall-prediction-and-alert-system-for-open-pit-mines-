@@ -20,6 +20,12 @@ public class PredictionHistory {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "snapshot_id", unique = true)
+    private Long snapshotId;
+
+    @Column(name = "mine_id")
+    private Long mineId;
+
     @Column(name = "ground_tilt", nullable = false)
     private Double groundTilt;
 

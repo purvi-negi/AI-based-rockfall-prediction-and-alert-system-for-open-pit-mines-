@@ -6,4 +6,6 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public interface MineRepository extends JpaRepository<Mine, Long> {
+
+    long countByStatusIgnoreCase(String status);
 }

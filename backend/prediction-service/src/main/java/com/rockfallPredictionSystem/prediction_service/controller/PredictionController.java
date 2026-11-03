@@ -33,11 +33,14 @@ public class PredictionController {
 
     /**
      * GET /api/predictions/history
-     * Returns all stored rockfall predictions ordered chronologically (newest first).
+     * Returns stored rockfall predictions ordered chronologically (newest first).
+     * Supports optional 'limit' query parameter (between 1 and 100).
      */
     @GetMapping("/history")
-    public ResponseEntity<List<PredictionResponseDTO>> getHistory() {
-        List<PredictionResponseDTO> history = predictionService.getHistory();
+    public ResponseEntity<List<PredictionResponseDTO>> getHistory(
+            @RequestParam(required = false) Integer limit
+    ) {
+        List<PredictionResponseDTO> history = predictionService.getHistory(limit);
         return ResponseEntity.ok(history);
     }
 

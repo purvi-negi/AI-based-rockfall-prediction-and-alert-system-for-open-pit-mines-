@@ -16,6 +16,12 @@ public class PredictionResponseDTO {
 
     private Long id;
 
+    @JsonProperty("snapshot_id")
+    private Long snapshotId;
+
+    @JsonProperty("mine_id")
+    private Long mineId;
+
     @JsonProperty("ground_tilt")
     private Double groundTilt;
 

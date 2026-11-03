@@ -13,6 +13,14 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class PredictionRequestDTO {
 
+    @JsonProperty("snapshot_id")
+    @JsonAlias({"snapshotId"})
+    private Long snapshotId;
+
+    @JsonProperty("mine_id")
+    @JsonAlias({"mineId"})
+    private Long mineId;
+
     @JsonProperty("ground_tilt")
     @JsonAlias({"groundTilt"})
     private Double groundTilt;

@@ -108,16 +108,34 @@ def predict(request: PredictionRequest):
     safe_prob = float(probabilities[0])
     hazard_prob = float(probabilities[1])
 
-    # Classification thresholds: SAFE (< 0.50), WARNING (0.50 <= p < 0.80), CRITICAL (p >= 0.80)
+    # NOTE ON PREDICTED_CLASS VS. RISK_LEVEL:
+    # `predicted_class` represents the SVM's hyperplane classification (decision_function >= 0).
+    # Because the model was trained with class_weight="balanced", the decision boundary is shifted
+    # towards the majority class (Class 0: Safe) to heavily penalize false negatives (missed rockfalls).
+    #
+    # In contrast, `risk_level` and `trigger_alert` are derived strictly from `hazard_prob`, which is
+    # estimated via Platt scaling (calibrated against empirical base rates).
+    #
+    # These two outputs measure distinct operational criteria and can legitimately differ
+    # (e.g., predicted_class=1 from the sensitive SVM decision boundary while calibrated hazard_probability
+    # falls into a LOW or SAFE risk category).
+    #
+    # Demonstration thresholds (for project demonstration only, not real-world mine safety decisions):
+    # - hazard_probability < 0.30            -> SAFE
+    # - 0.30 <= hazard_probability < 0.50     -> LOW
+    # - 0.50 <= hazard_probability < 0.80     -> WARNING
+    # - hazard_probability >= 0.80           -> CRITICAL
     if hazard_prob >= 0.80:
         risk_level = "CRITICAL"
     elif hazard_prob >= 0.50:
         risk_level = "WARNING"
+    elif hazard_prob >= 0.30:
+        risk_level = "LOW"
     else:
         risk_level = "SAFE"
 
-    # trigger_alert is true at or above 0.80
-    trigger_alert = bool(hazard_prob >= 0.80)
+    # trigger_alert is True when hazard_probability >= 0.50 (WARNING or CRITICAL); otherwise False
+    trigger_alert = bool(hazard_prob >= 0.50)
 
     return PredictionResponse(
         predicted_class=predicted_class,
