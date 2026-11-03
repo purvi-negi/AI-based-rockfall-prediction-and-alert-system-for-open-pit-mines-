@@ -25,3 +25,16 @@ bin/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local backup
+backend_local_backup/
+
+# IDE files
+.vscode/
+
+# Certificates and private keys
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
